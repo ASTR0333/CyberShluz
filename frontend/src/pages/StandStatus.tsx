@@ -10,6 +10,12 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
+const MANUAL_CHECKS = [
+  ['w_dc_services', 'На W-DC запущены Storage Node Service, Catalog Browser Service и Elasticsearch'],
+  ['w_dc_registered', 'w-dc.cyberprotect.test отображается в списке узлов хранения'],
+  ['repositories_present', 'Хранилища RepoW и RepoL созданы и отображаются в веб-консоли'],
+] as const;
+
 
 
 async function copyToClipboard(text: string) {
@@ -106,6 +112,7 @@ export const StandStatus = () => {
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
   const [keySubmitted, setKeySubmitted] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [manualConfirmations, setManualConfirmations] = useState<string[]>([]);
 
   const isFrozenStatus = status?.status === 'FREEZE';
   const countdownTarget = isFrozenStatus ? (status?.frozen_until ?? null) : (status?.expires_at ?? null);
@@ -148,11 +155,12 @@ export const StandStatus = () => {
     setIsChecking(true);
     setCheckResult(null);
     try {
-      await mockApi.check(standId);
+      await mockApi.check(standId, manualConfirmations);
       await new Promise(r => setTimeout(r, 4000));
       const result = await mockApi.getCheckResult(standId);
       setCheckResult(result);
-      if (result.status === 'PASSED') toast.success('Все проверки пройдены!');
+      if (result.status === 'PASSED') toast.success('Все проверки пройдены! Стенд отправлен на очистку.');
+      else if (result.status === 'REVIEW_REQUIRED') toast('Автопроверка пройдена. Подтвердите ручные пункты и повторите проверку.');
       else toast.error('Обнаружены проблемы — изучите лог');
     } catch {
       toast.error('Ошибка проверки');
@@ -238,7 +246,7 @@ export const StandStatus = () => {
     );
   }
 
-  const isActive = ['READY', 'DEPLOYING', 'PENDING'].includes(status.status);
+  const isActive = ['READY', 'DEPLOYING', 'PENDING', 'FAILED'].includes(status.status);
   const isFrozen = status.status === 'FREEZE';
   const sshUser = 'student';
   const sshCmd = status.ip_address ? `ssh ${sshUser}@${status.ip_address}` : null;
@@ -303,7 +311,29 @@ export const StandStatus = () => {
           )}
 
 
-          <div className="mt-8 pt-6 border-t border-gray-200 flex flex-wrap gap-3">
+          {status.status === 'READY' && (
+            <div className="mt-8 pt-6 border-t border-gray-200">
+              <p className="text-xs font-bold text-cyber-gray-dark uppercase tracking-wider mb-3">Ручная часть проверки</p>
+              <div className="space-y-2">
+                {MANUAL_CHECKS.map(([key, label]) => (
+                  <label key={key} className="flex items-start gap-2 text-xs text-cyber-gray-dark cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={manualConfirmations.includes(key)}
+                      onChange={(event) => setManualConfirmations((current) => event.target.checked
+                        ? [...current, key]
+                        : current.filter((item) => item !== key))}
+                      className="mt-0.5"
+                    />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+              <p className="text-[11px] text-cyber-gray-light mt-2">Эти пункты нельзя надёжно проверить по SSH; не подтверждайте их до фактической проверки в веб-консоли и Services.</p>
+            </div>
+          )}
+
+          <div className="mt-6 pt-6 border-t border-gray-200 flex flex-wrap gap-3">
             <button
               onClick={handleRunCheck}
               disabled={status.status !== 'READY' || isChecking}
@@ -448,11 +478,12 @@ export const StandStatus = () => {
             </div>
 
             <div className="pt-4 border-t border-gray-700 text-gray-400 text-xs leading-relaxed space-y-1">
-              <p>Через L-MS доступны все ВМ стенда по внутренней сети 10.0.0.0/24</p>
-              <p className="font-mono text-gray-500 text-[11px]">
-                L-NFS: 10.0.0.70 &nbsp;|&nbsp; L-PGSQL: 10.0.0.55<br />
-                W-DC: 10.0.0.5 &nbsp;|&nbsp; V-HV: 10.0.0.65
-              </p>
+              <p>Через L-MS доступны ВМ стенда по внутренней сети {status.network?.cidr || '—'}</p>
+              <div className="font-mono text-gray-500 text-[11px] flex flex-wrap gap-x-3">
+                {Object.entries(status.vms || {})
+                  .filter(([role]) => role !== 'L-MS')
+                  .map(([role, vm]) => <span key={role}>{role}: {vm.ip || vm.expected_ip}</span>)}
+              </div>
             </div>
           </div>
         </div>
@@ -466,7 +497,7 @@ export const StandStatus = () => {
             Топология стенда ({Object.keys(status.vms).length} ВМ)
           </h3>
           <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-            {Object.entries(status.vms).map(([role, vm]: [string, any]) => {
+            {Object.entries(status.vms).map(([role, vm]) => {
               const isVmActive = vm.status === 'ACTIVE';
               const isVmBuilding = vm.status === 'BUILD' || vm.status === 'BUILD-ERROR';
               return (
@@ -492,9 +523,9 @@ export const StandStatus = () => {
               );
             })}
           </div>
-          {status.vms && Object.values(status.vms).some((v: any) => v.status !== 'ACTIVE') && (
+          {status.vms && Object.values(status.vms).some((vm) => vm.status !== 'ACTIVE') && (
             <p className="text-xs text-gray-400 mt-3">
-              * ВМ с ошибкой (W-DC, V-HYPERV) — нехватка дисковой квоты. Linux-машины (L-MS, L-NFS, L-PGSQL) готовы к работе.
+              * Часть ВМ не перешла в ACTIVE. Проверьте сообщение Celery и квоты OpenStack; стенд не должен считаться готовым.
             </p>
           )}
         </div>
@@ -525,7 +556,7 @@ export const StandStatus = () => {
               </div>
             )}
             {checkResult && (
-              <div className={checkResult.status === 'PASSED' ? 'text-green-400' : 'text-red-400'}>
+              <div className={checkResult.status === 'PASSED' ? 'text-green-400' : checkResult.status === 'REVIEW_REQUIRED' ? 'text-amber-300' : 'text-red-400'}>
                 {checkResult.log.split('\n').map((line, i) => (
                   <div key={i} className="mb-1 leading-relaxed">{line}</div>
                 ))}
@@ -533,8 +564,10 @@ export const StandStatus = () => {
                   <span className="text-white font-bold mr-2">ИТОГ:</span>
                   <span className={checkResult.status === 'PASSED'
                     ? 'bg-green-900/50 text-green-400 px-3 py-0.5 rounded font-bold'
-                    : 'bg-red-900/50 text-red-400 px-3 py-0.5 rounded font-bold'}>
-                    {checkResult.status === 'PASSED' ? '✓ ВЫПОЛНЕНО' : '✗ НЕ ВЫПОЛНЕНО'}
+                    : checkResult.status === 'REVIEW_REQUIRED'
+                      ? 'bg-amber-900/50 text-amber-300 px-3 py-0.5 rounded font-bold'
+                      : 'bg-red-900/50 text-red-400 px-3 py-0.5 rounded font-bold'}>
+                    {checkResult.status === 'PASSED' ? '✓ ВЫПОЛНЕНО' : checkResult.status === 'REVIEW_REQUIRED' ? '⚠ НУЖНО ПОДТВЕРЖДЕНИЕ' : '✗ НЕ ВЫПОЛНЕНО'}
                   </span>
                 </div>
                 {checkResult.details && Object.keys(checkResult.details).length > 0 && (

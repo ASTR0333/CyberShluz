@@ -30,8 +30,8 @@ export const TeacherDashboard = () => {
     try {
       const data = await mockApi.getStands();
       setStudents(data);
-    } catch {
-
+    } catch (error) {
+      console.error('Не удалось обновить список стендов', error);
     } finally {
       setLoading(false);
     }

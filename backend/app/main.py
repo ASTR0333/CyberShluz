@@ -38,6 +38,10 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("ALTER TABLE stands ADD COLUMN private_key TEXT"))
                 conn.commit()
                 print(" [DB] Добавлена колонка private_key", flush=True)
+            if "student_private_key" not in columns:
+                conn.execute(text("ALTER TABLE stands ADD COLUMN student_private_key TEXT"))
+                conn.commit()
+                print(" [DB] Добавлена колонка student_private_key", flush=True)
             if "lti_context" not in columns:
                 conn.execute(text("ALTER TABLE stands ADD COLUMN lti_context TEXT"))
                 conn.commit()
@@ -166,4 +170,4 @@ if __name__ == "__main__":
     import uvicorn
      
      
-    uvicorn.run(app, host="0.0.0.0", port=8000)   
+    uvicorn.run(app, host="0.0.0.0", port=8000)

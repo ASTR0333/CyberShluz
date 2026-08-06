@@ -54,7 +54,10 @@ class Stand(Base):
     
     status = Column(Enum(StandStatusEnum), default=StandStatusEnum.FREE, nullable=False)
     ip_address = Column(String, nullable=True)
+    # Teacher/admin key. It is never exposed to a student.
     private_key = Column(String, nullable=True)
+    # Service key for the unprivileged browser/Ansible session.
+    student_private_key = Column(String, nullable=True)
     vm_details = Column(Text, nullable=True)
     network_details = Column(Text, nullable=True)  
     last_check_result = Column(Text, nullable=True)  

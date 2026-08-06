@@ -1,4 +1,5 @@
  
+import io
 import os
 import time
 
@@ -8,37 +9,9 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import ed25519, rsa
 
 from app.core.config import settings
+from app.core.topology import DeploymentConfig, default_lab3_config
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
-
-LAB3_TOPOLOGY = {
-    "L-MS": {
-        "image": "LAB2_TMP_L-MS/Debian11.11",
-        "ip": "10.0.0.10",
-        "flavor": "edu 2x2",
-    },
-    "L-NFS": {
-        "image": "LAB2_TMP_L-NFS",
-        "ip": "10.0.0.70",
-        "flavor": "edu 2x2",
-    },
-    "L-PGSQL": {
-        "image": "LAB2_TMP_L-PGSQL",
-        "ip": "10.0.0.55",
-        "flavor": "edu 2x2",
-    },
-    "W-DC": {
-        "image": "LAB2_TMP_W-DC",
-        "ip": "10.0.0.5",
-        "flavor": "edu 4x4",
-    },
-    "V-HYPERV": {
-        "image": "LAB2_TMP_V-HYPERV",
-        "ip": "10.0.0.65",
-        "flavor": "edu 4x4",
-    },
-}
-
 
 class CapacityExceededException(Exception):
     pass
@@ -102,6 +75,38 @@ class OpenStackClient:
     def get_cluster_utilization(self) -> float:
         return self.check_capacity(required_vcpus=0)
 
+    def get_deployment_catalog(self) -> dict[str, list[str]]:
+        """Return selectable OpenStack resources for the deployment form."""
+        conn = self._connect()
+        return {
+            "images": sorted({image.name for image in conn.compute.images() if image.name}),
+            "flavors": sorted({flavor.name for flavor in conn.compute.flavors() if flavor.name}),
+            "external_networks": sorted(
+                {
+                    network.name
+                    for network in conn.network.networks(is_router_external=True)
+                    if network.name
+                }
+            ),
+        }
+
+    def required_vcpus(self, deployment: DeploymentConfig) -> int:
+        """Resolve selected flavors and calculate the quota impact before allocation."""
+        conn = self._connect()
+        required = 0
+        missing: list[str] = []
+        for vm in deployment.vms:
+            if not vm.enabled:
+                continue
+            flavor = conn.compute.find_flavor(vm.flavor)
+            if not flavor:
+                missing.append(f"{vm.role}: {vm.flavor}")
+                continue
+            required += int(flavor.vcpus or 0)
+        if missing:
+            raise ValueError("OpenStack flavors not found: " + ", ".join(missing))
+        return required
+
      
      
      
@@ -120,8 +125,7 @@ class OpenStackClient:
             try:
                 conn.compute.delete_keypair(existing)
             except Exception as e:
-                print(f"[OpenStack] delete keypair failed: {e}")
-                name = f"{name}-{int(time.time())}"
+                raise RuntimeError(f"Cannot replace OpenStack keypair '{name}': {e}") from e
 
         try:
             conn.compute.create_keypair(name=name, public_key=public_openssh)
@@ -170,9 +174,7 @@ class OpenStackClient:
 
         return private_pem, public_openssh
 
-    def _ensure_stand_network(
-        self, conn, stand_id: str, cidr: str = "10.0.0.0/24", gateway: str = "10.0.0.1"
-    ) -> dict:
+    def _ensure_stand_network(self, conn, stand_id: str, deployment: DeploymentConfig) -> dict:
         """
         Создаёт ИЗОЛИРОВАННУЮ сеть стенда: своя Neutron-сеть + подсеть 10.0.0.0/24 +
         роутер с внешним шлюзом в `public`. Это даёт каждому студенту собственный
@@ -183,6 +185,7 @@ class OpenStackClient:
         net_name = f"stand{stand_id}-net"
         subnet_name = f"stand{stand_id}-subnet"
         router_name = f"stand{stand_id}-router"
+        spec = deployment.network
 
         network = conn.network.find_network(net_name)
         if not network:
@@ -196,16 +199,19 @@ class OpenStackClient:
                 name=subnet_name,
                 network_id=network.id,
                 ip_version=4,
-                cidr=cidr,
-                gateway_ip=gateway,
-                dns_nameservers=["8.8.8.8", "1.1.1.1"],
+                cidr=spec.cidr,
+                gateway_ip=spec.gateway,
+                allocation_pools=[{"start": spec.dhcp_start, "end": spec.dhcp_end}],
+                dns_nameservers=spec.dns_nameservers,
                 enable_dhcp=True,
             )
 
         router = conn.network.find_router(router_name)
         if not router:
-            ext = conn.network.find_network("public")
-            gw = {"network_id": ext.id} if ext else None
+            ext = conn.network.find_network(spec.external_network)
+            if not ext:
+                raise ValueError(f"External network '{spec.external_network}' was not found")
+            gw = {"network_id": ext.id}
             router = conn.network.create_router(name=router_name, external_gateway_info=gw)
             try:
                 conn.network.add_interface_to_router(router, subnet_id=subnet.id)
@@ -216,13 +222,18 @@ class OpenStackClient:
             "network_id": network.id,
             "subnet_id": subnet.id,
             "router_id": router.id,
-            "cidr": cidr,
+            "cidr": spec.cidr,
+            "gateway": spec.gateway,
+            "dhcp_start": spec.dhcp_start,
+            "dhcp_end": spec.dhcp_end,
+            "external_network": spec.external_network,
             "name": net_name,
         }
 
     def _teardown_stand_network(self, conn, stand_id: str):
         """Сносит изолированную сеть стенда (роутер → подсеть → сеть). По имени,
         чтобы работать даже без сохранённых id."""
+        errors: list[str] = []
         router = conn.network.find_router(f"stand{stand_id}-router")
         if router:
             try:
@@ -245,6 +256,7 @@ class OpenStackClient:
                 conn.network.delete_router(router)
             except Exception as e:
                 print(f"[OpenStack] delete router failed: {e}")
+                errors.append(f"router: {e}")
 
         net = conn.network.find_network(f"stand{stand_id}-net")
         if net:
@@ -252,21 +264,35 @@ class OpenStackClient:
                 conn.network.delete_network(net)
             except Exception as e:
                 print(f"[OpenStack] delete network failed: {e}")
+                errors.append(f"network: {e}")
+        if errors:
+            raise RuntimeError("; ".join(errors))
 
-    def deploy_lab3_stand(self, stand_id: str, key_name: str, progress_cb=None) -> dict[str, dict]:
+    def deploy_lab3_stand(
+        self,
+        stand_id: str,
+        admin_key_name: str,
+        student_key_name: str,
+        admin_private_key: str,
+        student_private_key: str,
+        deployment: DeploymentConfig | None = None,
+        progress_cb=None,
+    ) -> dict[str, dict]:
         conn = self._connect()
+        deployment = deployment or default_lab3_config()
+        topology = deployment.enabled_topology()
 
          
         if progress_cb:
             progress_cb(28, "Создание изолированной сети стенда...")
-        net_info = self._ensure_stand_network(conn, stand_id)
+        net_info = self._ensure_stand_network(conn, stand_id, deployment)
         network = conn.network.get_network(net_info["network_id"])
 
-        sg = self._ensure_security_group(conn)
+        sg = self._ensure_security_group(conn, stand_id, deployment.network.cidr)
 
         results = {}
-        total = len(LAB3_TOPOLOGY)
-        for idx, (vm_role, spec) in enumerate(LAB3_TOPOLOGY.items()):
+        total = len(topology)
+        for idx, (vm_role, spec) in enumerate(topology.items()):
             vm_name = f"stand{stand_id}-{vm_role}"
             if progress_cb:
                 progress_cb(int(30 + 60 * idx / total), f"Создание ВМ {vm_role} ({idx+1}/{total})...")
@@ -299,8 +325,7 @@ class OpenStackClient:
 
             image = conn.compute.find_image(spec["image"])
             if not image:
-                print(f"[OpenStack] Image '{spec['image']}' not found, skipping {vm_role}")
-                continue
+                raise ValueError(f"Image '{spec['image']}' not found for {vm_role}")
 
              
             glance_image = conn.image.find_image(spec["image"])
@@ -308,9 +333,7 @@ class OpenStackClient:
 
             flavor = conn.compute.find_flavor(spec["flavor"])
             if not flavor:
-                flavor = conn.compute.find_flavor("edu 2x2")
-            if not flavor:
-                flavor = conn.compute.find_flavor("small")
+                raise ValueError(f"Flavor '{spec['flavor']}' not found for {vm_role}")
 
              
              
@@ -327,40 +350,15 @@ class OpenStackClient:
 
              
              
-            pubkey = conn.compute.get_keypair(key_name).public_key
-            user_data = f"""#cloud-config
-users:
-  - name: student
-    sudo: ALL=(ALL) NOPASSWD:ALL
-    groups: [sudo, wheel]
-    shell: /bin/bash
-    lock_passwd: true
-    ssh_authorized_keys:
-      - {pubkey}
-
-ssh_pwauth: false
-disable_root: true
-
-write_files:
-  - path: /etc/sudoers.d/90-student-nopasswd
-    permissions: '0440'
-    content: |
-      student ALL=(ALL) NOPASSWD:ALL
-
-runcmd:
-  - [ sh, -c, "sed -i 's/^#*PasswordAuthentication.*/PasswordAuthentication no/' /etc/ssh/sshd_config" ]
-  - [ sh, -c, "sed -i 's/^#*PermitEmptyPasswords.*/PermitEmptyPasswords no/' /etc/ssh/sshd_config" ]
-  - [ sh, -c, "sed -i 's/^#*ChallengeResponseAuthentication.*/ChallengeResponseAuthentication no/' /etc/ssh/sshd_config" ]
-  - [ sh, -c, "sed -i 's/^#*KbdInteractiveAuthentication.*/KbdInteractiveAuthentication no/' /etc/ssh/sshd_config" ]
-  - [ sh, -c, "echo 'student ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-student-nopasswd && chmod 0440 /etc/sudoers.d/90-student-nopasswd" ]
-  - [ sh, -c, "systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || service sshd restart || service ssh restart || true" ]
-"""
+            admin_pubkey = conn.compute.get_keypair(admin_key_name).public_key
+            student_pubkey = conn.compute.get_keypair(student_key_name).public_key
+            user_data = self.build_user_data(vm_role, admin_pubkey, student_pubkey)
 
             server = conn.compute.create_server(
                 name=vm_name,
                 flavor_id=flavor.id,
                 networks=[{"uuid": network.id, "fixed_ip": spec["ip"]}],
-                key_name=key_name,
+                key_name=admin_key_name,
                 security_groups=[{"name": sg.name}],
                 block_device_mapping_v2=bdm,
                 user_data=user_data,
@@ -379,7 +377,7 @@ runcmd:
             try:
                 server_obj = conn.compute.get_server(info["server_id"])
                 server = conn.compute.wait_for_server(server_obj, status="ACTIVE", wait=600)
-                actual_ip = LAB3_TOPOLOGY[vm_role]["ip"]
+                actual_ip = topology[vm_role]["ip"]
                 if server.addresses:
                     for net_addrs in server.addresses.values():
                         for addr in net_addrs:
@@ -403,7 +401,11 @@ runcmd:
             vm_info = results.get(vm_role)
             if vm_info and vm_info["status"] == "ACTIVE":
                 try:
-                    floating_ip = self._assign_floating_ip(conn, vm_info["server_id"])
+                    floating_ip = self._assign_floating_ip(
+                        conn,
+                        vm_info["server_id"],
+                        deployment.network.external_network,
+                    )
                     if floating_ip:
                         vm_info["floating_ip"] = floating_ip
                         print(f"[OpenStack] Floating IP {floating_ip} assigned to {vm_role}")
@@ -418,132 +420,215 @@ runcmd:
                 if progress_cb:
                     progress_cb(97, f"Настройка SSH-доступа на {vm_role}...")
                 try:
-                    pubkey = conn.compute.get_keypair(key_name).public_key
-                    self._bootstrap_lms_access(vm_info["floating_ip"], pubkey)
+                    self._verify_lms_access(
+                        vm_info["floating_ip"],
+                        admin_private_key,
+                        student_private_key,
+                    )
                     vm_info["ssh_bootstrapped"] = True
                 except Exception as e:
                     print(f"[OpenStack] SSH bootstrap failed for {vm_role}: {e}")
-                    vm_info["ssh_bootstrapped"] = False
+                    raise RuntimeError(
+                        "L-MS did not pass key-only SSH verification; "
+                        "the image must contain cloud-init and OpenSSH"
+                    ) from e
 
          
          
         results["__network__"] = net_info
         return results
 
-    def _bootstrap_lms_access(self, ip: str, public_key: str, max_wait: int = 180):
-        """
-        Заходит на L-MS по паролю (LAB2_TMP — не cloud-init),
-        пробрасывает SSH ключ, отключает парольную аутентификацию
-        и настраивает sudo без пароля для student.
-        """
+    @staticmethod
+    def build_user_data(vm_role: str, admin_pubkey: str, student_pubkey: str) -> str:
+        """Build a key-only access policy for Linux and Windows cloud images."""
+        if vm_role in {"W-DC", "V-HYPERV"}:
+            return OpenStackClient._build_windows_user_data(admin_pubkey, student_pubkey)
+        return OpenStackClient._build_linux_user_data(admin_pubkey, student_pubkey)
+
+    @staticmethod
+    def _build_linux_user_data(admin_pubkey: str, student_pubkey: str) -> str:
+        return f"""#cloud-config
+users:
+  - name: labadmin
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - {admin_pubkey}
+  - name: student
+    shell: /bin/bash
+    lock_passwd: true
+    ssh_authorized_keys:
+      - {student_pubkey}
+
+ssh_pwauth: false
+disable_root: true
+
+write_files:
+  - path: /etc/sudoers.d/90-kibershluz-admin
+    owner: root:root
+    permissions: '0440'
+    content: |
+      labadmin ALL=(ALL) NOPASSWD:ALL
+  - path: /usr/local/sbin/kibershluz-ssh-hardening
+    owner: root:root
+    permissions: '0700'
+    content: |
+      #!/bin/sh
+      set -eu
+      rm -f /etc/sudoers.d/90-student-nopasswd /etc/sudoers.d/*student*
+      gpasswd -d student sudo >/dev/null 2>&1 || true
+      gpasswd -d student wheel >/dev/null 2>&1 || true
+      passwd -l root >/dev/null 2>&1 || true
+      passwd -l labadmin >/dev/null 2>&1 || true
+      passwd -l student >/dev/null 2>&1 || true
+      set_option() {{
+        option="$1"
+        value="$2"
+        if grep -qiE "^[[:space:]]*#?[[:space:]]*$option[[:space:]]+" /etc/ssh/sshd_config; then
+          sed -ri "s|^[[:space:]]*#?[[:space:]]*$option[[:space:]]+.*|$option $value|I" /etc/ssh/sshd_config
+        else
+          printf '%s %s\\n' "$option" "$value" >> /etc/ssh/sshd_config
+        fi
+      }}
+      set_option PermitRootLogin no
+      set_option PasswordAuthentication no
+      set_option KbdInteractiveAuthentication no
+      set_option ChallengeResponseAuthentication no
+      set_option PermitEmptyPasswords no
+      set_option PubkeyAuthentication yes
+      if [ -d /etc/ssh/sshd_config.d ]; then
+        printf '%s\\n' 'PermitRootLogin no' 'PasswordAuthentication no' \\
+          'KbdInteractiveAuthentication no' 'ChallengeResponseAuthentication no' \\
+          'PermitEmptyPasswords no' 'PubkeyAuthentication yes' \\
+          > /etc/ssh/sshd_config.d/99-kibershluz.conf
+      fi
+      sshd -t
+      systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || \\
+        service sshd restart 2>/dev/null || service ssh restart
+
+runcmd:
+  - [ /usr/local/sbin/kibershluz-ssh-hardening ]
+"""
+
+    @staticmethod
+    def _build_windows_user_data(admin_pubkey: str, student_pubkey: str) -> str:
+        return f"""#ps1
+$ErrorActionPreference = 'Stop'
+$adminPassword = [guid]::NewGuid().ToString() + 'aA1!'
+$studentPassword = [guid]::NewGuid().ToString() + 'aA1!'
+net user labadmin $adminPassword /add /y
+net localgroup Administrators labadmin /add
+net user student $studentPassword /add /y
+net localgroup Administrators student /delete 2>$null
+Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 1
+Disable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue
+
+if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {{
+    Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0
+}}
+New-Item -ItemType Directory -Force -Path C:\\Users\\student\\.ssh | Out-Null
+Set-Content -Path C:\\Users\\student\\.ssh\\authorized_keys -Value '{student_pubkey}'
+icacls C:\\Users\\student\\.ssh /inheritance:r /grant 'student:(OI)(CI)F' /grant 'SYSTEM:(OI)(CI)F' | Out-Null
+
+New-Item -ItemType Directory -Force -Path C:\\ProgramData\\ssh | Out-Null
+Set-Content -Path C:\\ProgramData\\ssh\\administrators_authorized_keys -Value '{admin_pubkey}'
+icacls C:\\ProgramData\\ssh\\administrators_authorized_keys /inheritance:r /grant 'Administrators:F' /grant 'SYSTEM:F' | Out-Null
+
+$config = 'C:\\ProgramData\\ssh\\sshd_config'
+$content = Get-Content $config -Raw
+$options = @{{
+    'PasswordAuthentication' = 'no'
+    'KbdInteractiveAuthentication' = 'no'
+    'PubkeyAuthentication' = 'yes'
+    'PermitEmptyPasswords' = 'no'
+}}
+foreach ($option in $options.Keys) {{
+    if ($content -match "(?im)^\\s*#?\\s*$option\\s+.*$") {{
+        $content = $content -replace "(?im)^\\s*#?\\s*$option\\s+.*$", "$option $($options[$option])"
+    }} else {{
+        $content += "`r`n$option $($options[$option])"
+    }}
+}}
+Set-Content -Path $config -Value $content
+Set-Service sshd -StartupType Automatic
+Restart-Service sshd
+"""
+
+    @staticmethod
+    def _paramiko_key(private_key: str):
+        import paramiko
+
+        for key_class in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+            try:
+                return key_class.from_private_key(io.StringIO(private_key))
+            except Exception:
+                continue
+        raise ValueError("Unsupported SSH private key format")
+
+    def _verify_lms_access(
+        self,
+        ip: str,
+        admin_private_key: str,
+        student_private_key: str,
+        max_wait: int = 240,
+    ) -> None:
+        """Fail closed unless both roles work and only the admin can use sudo."""
         import paramiko
         import socket
 
-        user = settings.VM_DEFAULT_USER
-        password = settings.VM_DEFAULT_PASSWORD
+        def connect(username: str, private_key: str):
+            deadline = time.time() + max_wait
+            last_error: Exception | None = None
+            while time.time() < deadline:
+                client = paramiko.SSHClient()
+                client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                try:
+                    client.connect(
+                        hostname=ip,
+                        username=username,
+                        pkey=self._paramiko_key(private_key),
+                        timeout=10,
+                        banner_timeout=15,
+                        auth_timeout=15,
+                        look_for_keys=False,
+                        allow_agent=False,
+                    )
+                    return client
+                except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as exc:
+                    last_error = exc
+                    client.close()
+                    time.sleep(5)
+            raise RuntimeError(f"key-only SSH to {username}@{ip} failed: {last_error}")
 
-         
-        client = paramiko.SSHClient()
-         
-         
-         
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())   
-
-        deadline = time.time() + max_wait
-        last_err = None
-        while time.time() < deadline:
-            try:
-                client.connect(
-                    hostname=ip,
-                    username=user,
-                    password=password,
-                    timeout=10,
-                    banner_timeout=15,
-                    auth_timeout=15,
-                    look_for_keys=False,
-                    allow_agent=False,
-                )
-                break
-            except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as e:
-                last_err = e
-                time.sleep(5)
-        else:
-            raise RuntimeError(f"SSH на {ip} недоступен за {max_wait}s: {last_err}")
-
-         
-        user_cmds = " && ".join([
-            "mkdir -p ~/.ssh && chmod 700 ~/.ssh",
-            f"echo {public_key!r} >> ~/.ssh/authorized_keys",
-            "sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys",
-            "chmod 600 ~/.ssh/authorized_keys",
-        ])
-
-         
-         
-         
-        sudo_script = f"""\
-set -e
-# sudoers
-echo '{user} ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/90-{user}-nopasswd
-chmod 0440 /etc/sudoers.d/90-{user}-nopasswd
-# sshd_config — заменяем или дописываем в конец, чтобы точно сработало
-for key in PasswordAuthentication PermitEmptyPasswords ChallengeResponseAuthentication KbdInteractiveAuthentication; do
-    if grep -qiE "^[[:space:]]*#?[[:space:]]*${{key}}" /etc/ssh/sshd_config; then
-        sed -i "s/^[[:space:]]*#\\?[[:space:]]*${{key}}.*/${{key}} no/I" /etc/ssh/sshd_config
-    else
-        echo "${{key}} no" >> /etc/ssh/sshd_config
-    fi
-done
-# conf.d — если есть
-for f in /etc/ssh/sshd_config.d/*.conf 2>/dev/null; do
-    [ -f "$f" ] && sed -i "s/^[[:space:]]*PasswordAuthentication.*/PasswordAuthentication no/I" "$f" || true
-done
-# перезапуск sshd
-systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || service sshd restart 2>/dev/null || service ssh restart 2>/dev/null || true
-"""
-
+        admin = connect("labadmin", admin_private_key)
         try:
-             
-             
-            stdin, stdout, stderr = client.exec_command(user_cmds, timeout=30)   
-            rc = stdout.channel.recv_exit_status()
-            if rc != 0:
-                err = stderr.read().decode(errors="ignore")[:300]
-                print(f"[Bootstrap] authorized_keys rc={rc}: {err}")
-
-             
-             
-            stdin, stdout, stderr = client.exec_command("sudo -S bash -s", timeout=60)   
-            stdin.write(password + "\n")
-            stdin.write(sudo_script)
-            stdin.channel.shutdown_write()
-            rc = stdout.channel.recv_exit_status()
-            if rc != 0:
-                err = stderr.read().decode(errors="ignore")[:500]
-                raise RuntimeError(f"sudo bootstrap rc={rc}: {err}")
+            _, stdout, stderr = admin.exec_command("sudo -n true", timeout=20)
+            if stdout.channel.recv_exit_status() != 0:
+                raise RuntimeError(stderr.read().decode(errors="ignore")[:300] or "admin sudo failed")
         finally:
-            client.close()
+            admin.close()
 
-        print(f"[Bootstrap] L-MS @ {ip}: ключ прокинут, парольный SSH выключен, sudo NOPASSWD активен")
+        student = connect("student", student_private_key)
+        try:
+            _, stdout, _ = student.exec_command("sudo -n true", timeout=20)
+            if stdout.channel.recv_exit_status() == 0:
+                raise RuntimeError("student unexpectedly has sudo access")
+        finally:
+            student.close()
 
-    def _ensure_security_group(self, conn) -> object:
-        sg_name = "lab-access-sg"
+    def _ensure_security_group(self, conn, stand_id: str, private_cidr: str) -> object:
+        sg_name = f"stand{stand_id}-key-only-sg"
         sg = conn.network.find_security_group(sg_name)
-        if sg:
-            return sg
-
-        sg = conn.network.create_security_group(name=sg_name, description="Lab access rules")
+        if not sg:
+            sg = conn.network.create_security_group(
+                name=sg_name,
+                description=f"Key-only external access and private traffic for stand {stand_id}",
+            )
         rules = [
             (22, 22, "tcp"),
             (80, 80, "tcp"),
             (443, 443, "tcp"),
             (9877, 9877, "tcp"),
-            (3389, 3389, "tcp"),
-            (5432, 5432, "tcp"),
-            (111, 111, "tcp"),
-            (111, 111, "udp"),
-            (2049, 2049, "tcp"),
-            (2049, 2049, "udp"),
         ]
         for port_min, port_max, proto in rules:
             try:
@@ -563,6 +648,15 @@ systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || servi
                 security_group_id=sg.id,
                 direction="ingress",
                 ethertype="IPv4",
+                remote_ip_prefix=private_cidr,
+            )
+        except Exception:
+            pass
+        try:
+            conn.network.create_security_group_rule(
+                security_group_id=sg.id,
+                direction="ingress",
+                ethertype="IPv4",
                 protocol="icmp",
                 remote_ip_prefix="0.0.0.0/0",
             )
@@ -570,7 +664,7 @@ systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || servi
             pass
         return sg
 
-    def _assign_floating_ip(self, conn, server_id: str) -> str:
+    def _assign_floating_ip(self, conn, server_id: str, external_network: str = "public") -> str:
         server = conn.compute.get_server(server_id)
         if server.addresses:
             for net_addrs in server.addresses.values():
@@ -600,7 +694,7 @@ systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || servi
             except Exception:
                 continue
 
-        ext_net = conn.network.find_network("public")
+        ext_net = conn.network.find_network(external_network)
         if ext_net:
             try:
                 fip = conn.network.create_ip(floating_network_id=ext_net.id)
@@ -627,7 +721,9 @@ systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || servi
 
     def cleanup_lab3_stand(self, stand_id: str):
         conn = self._connect()
-        for vm_role in LAB3_TOPOLOGY:
+        vm_roles = default_lab3_config().enabled_topology()
+        errors: list[str] = []
+        for vm_role in vm_roles:
             vm_name = f"stand{stand_id}-{vm_role}"
             try:
                 server = conn.compute.find_server(vm_name)
@@ -644,28 +740,45 @@ systemctl restart sshd 2>/dev/null || systemctl restart ssh 2>/dev/null || servi
                 conn.compute.delete_server(server)
             except Exception as e:
                 print(f"[OpenStack] Cleanup {vm_name} failed: {e}")
+                errors.append(f"{vm_name}: {e}")
 
-        for vm_role in LAB3_TOPOLOGY:
+        for vm_role in vm_roles:
             vm_name = f"stand{stand_id}-{vm_role}"
             try:
                 server = conn.compute.find_server(vm_name)
                 if server:
                     conn.compute.wait_for_delete(server, wait=120)
-            except Exception:
-                pass
+            except Exception as exc:
+                errors.append(f"wait {vm_name}: {exc}")
+
+        for key_name in (
+            f"key-stand{stand_id}-admin",
+            f"key-stand{stand_id}-student",
+            f"key-stand{stand_id}",  # cleanup compatibility with older stands
+        ):
+            try:
+                keypair = conn.compute.find_keypair(key_name)
+                if keypair:
+                    conn.compute.delete_keypair(keypair)
+            except Exception as exc:
+                errors.append(f"keypair {key_name}: {exc}")
 
         try:
-            keypair = conn.compute.find_keypair(f"key-stand{stand_id}")
-            if keypair:
-                conn.compute.delete_keypair(keypair)
-        except Exception:
-            pass
+            security_group = conn.network.find_security_group(f"stand{stand_id}-key-only-sg")
+            if security_group:
+                conn.network.delete_security_group(security_group)
+        except Exception as exc:
+            errors.append(f"security group: {exc}")
 
          
         try:
             self._teardown_stand_network(conn, stand_id)
         except Exception as e:
             print(f"[OpenStack] Network teardown failed for stand {stand_id}: {e}")
+            errors.append(f"network: {e}")
+
+        if errors:
+            raise RuntimeError("Cleanup is incomplete: " + "; ".join(errors))
 
     def cleanup_vm(self, name: str, project_id: str = None):
         conn = self._connect(project_id)

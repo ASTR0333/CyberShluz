@@ -1,0 +1,23 @@
+#cloud-config
+# Select the administrator's OpenStack SSH keypair when creating the VM.
+# Cyber Infrastructure injects that key into Ubuntu's default user via cloud-init.
+ssh_pwauth: false
+disable_root: true
+
+write_files:
+  - path: /etc/ssh/sshd_config.d/99-key-only.conf
+    owner: root:root
+    permissions: '0644'
+    content: |
+      PubkeyAuthentication yes
+      PasswordAuthentication no
+      KbdInteractiveAuthentication no
+      ChallengeResponseAuthentication no
+      PermitEmptyPasswords no
+      PermitRootLogin no
+
+runcmd:
+  - [passwd, -l, root]
+  - [sh, -c, "sshd -t && (systemctl restart ssh || systemctl restart sshd)"]
+
+final_message: "Service VM hardened: SSH keys only, root login disabled"

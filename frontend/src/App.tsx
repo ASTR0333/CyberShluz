@@ -60,7 +60,7 @@ function LtiGate({ children }: { children: ReactNode }) {
     })();
     return () => { alive = false; };
 
-  }, []);
+  }, [location.pathname, location.search, navigate]);
 
   if (!ready) {
     return (

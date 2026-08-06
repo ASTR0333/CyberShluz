@@ -31,5 +31,10 @@ async def cleanup_stand(stand_id: int, db: Session = Depends(get_db), user=Depen
     stand.frozen_until = None
     db.commit()
 
-    cleanup_stand_task.delay(stand_id=stand_id)
+    try:
+        cleanup_stand_task.delay(stand_id=stand_id)
+    except Exception as exc:
+        stand.status = StandStatusEnum.READY
+        db.commit()
+        raise HTTPException(status_code=503, detail=f"Очередь очистки недоступна: {exc}")
     return CleanupResponse(stand_id=str(stand_id), status="CLEANING", message="Стенд отправлен на очистку")

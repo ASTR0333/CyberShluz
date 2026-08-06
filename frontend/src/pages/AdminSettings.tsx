@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { mockApi } from '../api/mocks';
 import type { AuditEntry, CapacitySnapshot, GlobalSettings, PoolProject } from '../types/api';
 import {
@@ -45,6 +45,7 @@ function StatBox({
 }
 
 export const AdminSettings = () => {
+  const draftsInitialized = useRef(false);
   const [settings, setSettings] = useState<GlobalSettings | null>(null);
   const [capacity, setCapacity] = useState<CapacitySnapshot | null>(null);
   const [pool, setPool] = useState<PoolProject[]>([]);
@@ -84,10 +85,11 @@ export const AdminSettings = () => {
 
 
   useEffect(() => {
-    if (settings && draftTTL === 2 && draftFreeze === 24 && draftCap === 0.9) {
+    if (settings && !draftsInitialized.current) {
       setDraftTTL(settings.default_ttl_hours);
       setDraftFreeze(settings.freeze_duration_hours);
       setDraftCap(settings.max_cluster_utilization);
+      draftsInitialized.current = true;
     }
 
   }, [settings]);

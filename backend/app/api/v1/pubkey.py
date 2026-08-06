@@ -21,8 +21,9 @@ router = APIRouter()
     response_class=PlainTextResponse,
     summary="Системный приватный ключ стенда (для администратора)",
     description=(
-        "Возвращает приватный ключ, сгенерированный КИ при создании стенда. "
-        "Используется преподавателем для дебага через ssh student@<floating_ip>."
+        "Возвращает административный приватный ключ, созданный оркестратором и "
+        "загруженный в КИ через OpenStack API. Используется только преподавателем "
+        "для подключения через ssh labadmin@<floating_ip>."
     ),
 )
 def get_privkey(stand_id: str, db: Session = Depends(get_db), _=Depends(require_teacher)):
@@ -34,7 +35,7 @@ def get_privkey(stand_id: str, db: Session = Depends(get_db), _=Depends(require_
     return PlainTextResponse(
         stand.private_key,
         headers={
-            "Content-Disposition": f'attachment; filename="stand{stand_id}.pem"',
+            "Content-Disposition": f'attachment; filename="stand{stand_id}-admin.pem"',
             "Content-Type": "application/x-pem-file",
         },
     )
@@ -107,72 +108,8 @@ def _connect_with_key(ip: str, user: str, pkey, max_wait: int):
     raise last_err
 
 
-def _push_key_via_password(ip: str, user: str, password: str, public_key: str, max_wait: int = 60) -> None:
-    """Fallback: заходит на ВМ по паролю и кладёт public_key в authorized_keys.
-    Используется когда cloud-init не отработал (LAB2_TMP-образы)."""
-    import paramiko
-
-    print(f"[pubkey] FALLBACK: пробую password-auth для {user}@{ip}", flush=True)
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())   
-
-    deadline = time.time() + max_wait
-    last_err: Exception = RuntimeError("timeout")
-    while time.time() < deadline:
-        try:
-            client.connect(
-                hostname=ip, username=user, password=password,
-                timeout=10, banner_timeout=15, auth_timeout=15,
-                look_for_keys=False, allow_agent=False,
-            )
-            break
-        except paramiko.AuthenticationException as e:
-            client.close()
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Системный ключ не прописан на ВМ и пароль по умолчанию неверен. "
-                    "Задайте VM_DEFAULT_PASSWORD в .env, который соответствует образу LAB2_TMP. "
-                    f"Подробнее: {e}"
-                ),
-            )
-        except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as e:
-            last_err = e
-            time.sleep(5)
-    else:
-        client.close()
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"SSH порт стенда {ip} недоступен: {last_err}",
-        )
-
-    cmd = (
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        f"echo {shlex.quote(public_key)} >> ~/.ssh/authorized_keys && "
-        "sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys && "
-        "chmod 600 ~/.ssh/authorized_keys"
-    )
-    try:
-        _, stdout, stderr = client.exec_command(cmd, timeout=20)   
-        rc = stdout.channel.recv_exit_status()
-        if rc != 0:
-            err = stderr.read().decode(errors="ignore")[:300]
-            raise HTTPException(status_code=500, detail=f"password-bootstrap rc={rc}: {err}")
-        print("[pubkey] FALLBACK: системный ключ восстановлен на ВМ", flush=True)
-    finally:
-        client.close()
-
-
-def _extract_pubkey_from_private(private_key_str: str) -> str:
-    """Из приватного ключа достаёт public_key в формате OpenSSH (для authorized_keys)."""
-    pkey = _load_pkey(private_key_str)
-    return f"{pkey.get_name()} {pkey.get_base64()}"
-
-
 def _push_pubkey(ip: str, system_private_key: str, student_public_key: str, max_wait: int = 30):
-    import paramiko
-
-    user = settings.VM_DEFAULT_USER
+    user = settings.VM_ADMIN_USER
 
     print(f"[pubkey] === Подключение к {user}@{ip} ===", flush=True)
     print(f"[pubkey] Длина приватного ключа: {len(system_private_key)} байт", flush=True)
@@ -187,32 +124,22 @@ def _push_pubkey(ip: str, system_private_key: str, student_public_key: str, max_
      
     try:
         client = _connect_with_key(ip, user, pkey, max_wait)
-    except paramiko.AuthenticationException as auth_err:
-         
-         
-        print(f"[pubkey] key-auth не прошёл ({auth_err}), включаю password-fallback", flush=True)
-        system_pubkey = _extract_pubkey_from_private(system_private_key)
-        _push_key_via_password(ip, user, settings.VM_DEFAULT_PASSWORD, system_pubkey)
-         
-        try:
-            client = _connect_with_key(ip, user, pkey, max_wait)
-        except Exception as e:
-            raise HTTPException(
-                status_code=500,
-                detail=f"После password-bootstrap всё равно не пускает по ключу: {type(e).__name__}: {e}",
-            )
     except Exception as net_err:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Не удалось подключиться к стенду: {type(net_err).__name__}: {net_err}",
         )
 
-    cmd = (
-        "mkdir -p ~/.ssh && chmod 700 ~/.ssh && "
-        f"echo {shlex.quote(student_public_key)} >> ~/.ssh/authorized_keys && "
-        "sort -u ~/.ssh/authorized_keys -o ~/.ssh/authorized_keys && "
-        "chmod 600 ~/.ssh/authorized_keys"
-    )
+    script = f"""set -eu
+student_home=$(getent passwd student | cut -d: -f6)
+test -n "$student_home"
+install -d -m 0700 -o student -g student "$student_home/.ssh"
+printf '%s\\n' {shlex.quote(student_public_key)} >> "$student_home/.ssh/authorized_keys"
+sort -u "$student_home/.ssh/authorized_keys" -o "$student_home/.ssh/authorized_keys"
+chown student:student "$student_home/.ssh/authorized_keys"
+chmod 0600 "$student_home/.ssh/authorized_keys"
+"""
+    cmd = "sudo -n sh -c " + shlex.quote(script)
     try:
          
          

@@ -1,12 +1,23 @@
-from pydantic import BaseModel, field_serializer
-from typing import Optional, List
+from pydantic import BaseModel, Field, field_serializer
+from typing import Literal, Optional, List
 from datetime import datetime, timezone
+
+from app.core.topology import DeploymentConfig
 
 
 class DeployRequest(BaseModel):
     user_id: str
-    lab_id: int
+    lab_id: Literal[3]
     role: str = "student"
+    deployment: Optional[DeploymentConfig] = None
+
+
+class DeploymentOptionsResponse(BaseModel):
+    default: DeploymentConfig
+    images: List[str] = Field(default_factory=list)
+    flavors: List[str] = Field(default_factory=list)
+    external_networks: List[str] = Field(default_factory=list)
+    catalog_error: Optional[str] = None
 
 
 class DeployResponse(BaseModel):
@@ -24,6 +35,7 @@ class StatusResponse(BaseModel):
     frozen_until: Optional[datetime] = None
     message: Optional[str] = ""
     vms: Optional[dict] = None
+    network: Optional[dict] = None
 
     @field_serializer("expires_at", "frozen_until")
     def _serialize_utc(self, dt: Optional[datetime]) -> Optional[str]:
@@ -52,8 +64,8 @@ class FreezeResponse(BaseModel):
 
 
 class CheckRequest(BaseModel):
-    lab_template: str = "lab03_cyber"
-    checks: Optional[List[str]] = None
+    lab_template: str = Field(default="lab03_cyber", pattern=r"^[a-z0-9_]+$")
+    manual_confirmations: List[str] = Field(default_factory=list)
 
 
 class CheckResponse(BaseModel):

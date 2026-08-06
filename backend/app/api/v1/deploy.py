@@ -2,18 +2,41 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
-from app.schemas.contracts import DeployRequest, DeployResponse
+from app.schemas.contracts import DeployRequest, DeploymentOptionsResponse, DeployResponse
 from app.tasks.deploy import deploy_stand_task
 from app.core.pool_manager import PoolManager
 from app.core.database import get_db
 from app.core.models import RoleEnum, Stand, StandStatusEnum, User
 from app.core.openstack_client import OpenStackClient, CapacityExceededException
 from app.core.config import settings
+from app.core.topology import default_lab3_config
 from app.core.security import UserRole, require_student
 
  
 logger = logging.getLogger("admin_platform_logs")
 router = APIRouter()
+
+
+@router.get(
+    "/deployment-options",
+    response_model=DeploymentOptionsResponse,
+    summary="Получить параметры для интерактивного развёртывания",
+)
+async def deployment_options(user=Depends(require_student)):
+    del user
+    default = default_lab3_config(settings.OS_NETWORK_NAME or "public")
+    try:
+        catalog = OpenStackClient().get_deployment_catalog()
+        return DeploymentOptionsResponse(default=default, **catalog)
+    except Exception as exc:
+        logger.warning("OpenStack catalog is unavailable: %s", exc)
+        return DeploymentOptionsResponse(
+            default=default,
+            images=sorted({vm.image for vm in default.vms}),
+            flavors=sorted({vm.flavor for vm in default.vms}),
+            external_networks=[default.network.external_network],
+            catalog_error="Каталог OpenStack недоступен; показаны значения из методички.",
+        )
 
 @router.post(
     "/deploy",
@@ -40,6 +63,7 @@ async def deploy(
     auth_user_id = int(user.get("user_id", 0))
     request.user_id = auth_username
     request.role = auth_role
+    deployment = request.deployment or default_lab3_config(settings.OS_NETWORK_NAME or "public")
 
      
     if auth_role == UserRole.STUDENT:
@@ -68,7 +92,8 @@ async def deploy(
      
     os_client = OpenStackClient()
     try:
-        utilization = os_client.check_capacity(required_vcpus=0)
+        required_vcpus = os_client.required_vcpus(deployment)
+        utilization = os_client.check_capacity(required_vcpus=required_vcpus)
         threshold = getattr(settings, "MAX_CLUSTER_UTILIZATION", 0.90)
 
         if utilization > threshold:
@@ -80,10 +105,22 @@ async def deploy(
                 status_code=status.HTTP_423_LOCKED,
                 detail=f"Кластер перегружен ({utilization*100:.1f}%). Попробуйте позже."
             )
-    except CapacityExceededException as e:
-         
-         
-        logger.warning(f"[ADMIN_SYSTEM_ERROR] Nova API недоступен, пропускаем проверку: {e}")
+    except CapacityExceededException as exc:
+        logger.error("Nova capacity API is unavailable: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Не удалось проверить квоту OpenStack. Развёртывание не запущено.",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc))
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("OpenStack validation failed")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Не удалось проверить ресурсы OpenStack: {exc}",
+        )
 
      
     pool_manager = PoolManager(db)
@@ -114,10 +151,26 @@ async def deploy(
         db.commit()
 
      
-    deploy_stand_task.apply_async(
-        args=[stand_id_str, request.user_id, request.lab_id, request.role],
-        task_id=stand_id_str
-    )
+    try:
+        deploy_stand_task.apply_async(
+            args=[
+                stand_id_str,
+                request.user_id,
+                request.lab_id,
+                request.role,
+                deployment.model_dump(mode="json"),
+            ],
+            task_id=stand_id_str,
+        )
+    except Exception as exc:
+        logger.exception("Failed to enqueue deployment for stand %s", stand_id_str)
+        stand.status = StandStatusEnum.FREE
+        stand.user_id = None
+        db.commit()
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Очередь развёртывания недоступна: {exc}",
+        )
 
     return DeployResponse(
         stand_id=stand_id_str,

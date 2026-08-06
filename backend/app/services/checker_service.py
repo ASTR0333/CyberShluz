@@ -17,6 +17,7 @@ import asyncio
 import json
 import logging
 import os
+import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -52,7 +53,7 @@ class CheckerService:
     async def check_stand(
         self,
         stand_id: str,
-        stand_ips: list[str],
+        stand_hosts: dict[str, dict[str, str]],
         ssh_user: str,
         ssh_key_path: str,
         lab_template: str,
@@ -65,7 +66,7 @@ class CheckerService:
                 log=f"Плейбук тестирования не найден: {lab_template}.yml",
             )
 
-        inventory = ",".join(stand_ips) + ","
+        inventory_path = self._write_inventory(stand_hosts, ssh_user, ssh_key_path)
 
         env = os.environ.copy()
         env["ANSIBLE_STDOUT_CALLBACK"] = "json"
@@ -76,21 +77,19 @@ class CheckerService:
             "ansible-playbook",
             str(playbook),
             "-i",
-            inventory,
+            inventory_path,
             "--private-key",
             ssh_key_path,
             "-u",
             ssh_user,
             "-e",
             f"stand_id={stand_id}",
-            "-e",
-            "ansible_python_interpreter=/usr/bin/python3",
             "--timeout",
             str(self.timeout),
         ]
 
         try:
-            logger.info("[CHECKER] Stand=%s ips=%s playbook=%s", stand_id, stand_ips, playbook.name)
+            logger.info("[CHECKER] Stand=%s hosts=%s playbook=%s", stand_id, sorted(stand_hosts), playbook.name)
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdout=asyncio.subprocess.PIPE,
@@ -139,6 +138,60 @@ class CheckerService:
                 status="ERROR",
                 log=f"Критическая ошибка движка проверок: {e}",
             )
+        finally:
+            try:
+                os.unlink(inventory_path)
+            except OSError:
+                pass
+
+    @staticmethod
+    def _write_inventory(
+        stand_hosts: dict[str, dict[str, str]],
+        ssh_user: str,
+        ssh_key_path: str,
+    ) -> str:
+        """Build a role-aware inventory; private hosts are reached through L-MS."""
+        groups: dict[str, dict] = {}
+        role_groups = {"L-MS": "lms", "L-NFS": "nfs", "L-PGSQL": "pgsql"}
+        for role, group_name in role_groups.items():
+            host = stand_hosts.get(role)
+            if not host or not host.get("address"):
+                continue
+            host_vars: dict[str, str] = {
+                "ansible_host": host["address"],
+                "ansible_user": ssh_user,
+                "expected_hostname": role.lower() + ".cyberprotect.test",
+            }
+            proxy_jump = host.get("proxy_jump")
+            if proxy_jump:
+                host_vars.update(
+                    {
+                        "ansible_ssh_common_args": (
+                            f"-o ProxyJump={ssh_user}@{proxy_jump} "
+                            f"-o IdentityFile={ssh_key_path} "
+                            "-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+                        ),
+                    }
+                )
+            groups[group_name] = {
+                "hosts": {role.lower(): host_vars},
+            }
+
+        inventory = {"all": {"children": groups}}
+        handle = tempfile.NamedTemporaryFile(
+            mode="w",
+            encoding="utf-8",
+            suffix=".json",
+            prefix="lab-inventory-",
+            delete=False,
+        )
+        try:
+            json.dump(inventory, handle, ensure_ascii=False)
+            handle.flush()
+            os.chmod(handle.name, 0o600)
+            return handle.name
+        finally:
+            handle.close()
 
     def _parse_ansible_json(self, stdout: str, stderr: str, returncode: int) -> dict:
         """Разбираем JSON-вывод Ansible в читаемый отчёт + флаги для UI."""

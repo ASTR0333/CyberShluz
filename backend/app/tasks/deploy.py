@@ -3,10 +3,18 @@ from app.celery_app import celery_app
 from datetime import datetime, timedelta, timezone
 from app.core.openstack_client import OpenStackClient, CapacityExceededException
 from app.core.config import settings
+from app.core.topology import DeploymentConfig, default_lab3_config
 
 
 @celery_app.task(bind=True, max_retries=2)
-def deploy_stand_task(self, stand_id: str, user_id: str, lab_id: int, role: str = "student"):
+def deploy_stand_task(
+    self,
+    stand_id: str,
+    user_id: str,
+    lab_id: int,
+    role: str = "student",
+    deployment_config: dict | None = None,
+):
     from app.core.database import SessionLocal
     from app.core.models import Stand, StandStatusEnum
 
@@ -24,20 +32,37 @@ def deploy_stand_task(self, stand_id: str, user_id: str, lab_id: int, role: str 
     try:
         progress_cb(5, "Подключение к Кибер Инфраструктуре...")
         os_client = OpenStackClient()
+        deployment = (
+            DeploymentConfig.model_validate(deployment_config)
+            if deployment_config
+            else default_lab3_config(settings.OS_NETWORK_NAME or "public")
+        )
 
-        key_name = f"key-stand{stand_id}"
-        progress_cb(10, "Генерация SSH-ключа...")
-        private_key = os_client.create_keypair(key_name)
+        admin_key_name = f"key-stand{stand_id}-admin"
+        student_key_name = f"key-stand{stand_id}-student"
+        progress_cb(10, "Генерация SSH-ключей администратора и студента...")
+        private_key = os_client.create_keypair(admin_key_name)
+        student_private_key = os_client.create_keypair(student_key_name)
 
         progress_cb(20, "Проверка ёмкости кластера...")
-        utilization = os_client.get_cluster_utilization()
+        required_vcpus = os_client.required_vcpus(deployment)
+        utilization = os_client.check_capacity(required_vcpus=required_vcpus)
         if utilization > settings.MAX_CLUSTER_UTILIZATION:
             raise CapacityExceededException(
                 f"Кластер перегружен ({utilization*100:.1f}%)"
             )
 
-        progress_cb(30, "Развёртывание топологии Лаб. №3 (5 ВМ)...")
-        vm_results = os_client.deploy_lab3_stand(stand_id, key_name, progress_cb)
+        enabled_count = len(deployment.enabled_topology())
+        progress_cb(30, f"Развёртывание топологии Лаб. №3 ({enabled_count} ВМ)...")
+        vm_results = os_client.deploy_lab3_stand(
+            stand_id,
+            admin_key_name,
+            student_key_name,
+            private_key,
+            student_private_key,
+            deployment=deployment,
+            progress_cb=progress_cb,
+        )
          
         net_details = vm_results.pop("__network__", None)
 
@@ -48,6 +73,9 @@ def deploy_stand_task(self, stand_id: str, user_id: str, lab_id: int, role: str 
 
         active_count = sum(1 for v in vm_results.values() if v.get("status") == "ACTIVE")
         total_count = len(vm_results)
+        if active_count != total_count:
+            failed_roles = [role for role, vm in vm_results.items() if vm.get("status") != "ACTIVE"]
+            raise RuntimeError("Не все ВМ перешли в ACTIVE: " + ", ".join(failed_roles))
         ssh_bootstrapped = vm_results.get("L-MS", {}).get("ssh_bootstrapped", True)
 
         with SessionLocal() as db:
@@ -55,6 +83,7 @@ def deploy_stand_task(self, stand_id: str, user_id: str, lab_id: int, role: str 
             if stand:
                 stand.ip_address = access_ip
                 stand.private_key = private_key
+                stand.student_private_key = student_private_key
                 stand.status = StandStatusEnum.READY
                 stand.vm_details = json.dumps(vm_results, default=str)
                 if net_details:
@@ -75,26 +104,17 @@ def deploy_stand_task(self, stand_id: str, user_id: str, lab_id: int, role: str 
         }
 
     except CapacityExceededException as ce:
-        with SessionLocal() as db:
-            stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
-            if stand:
-                stand.status = StandStatusEnum.FREE
-                stand.user_id = None
-                db.commit()
-        self.update_state(state="FAILED", meta={"error": str(ce)})
-        raise self.retry(exc=ce, countdown=180)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=ce, countdown=180)
+        self.update_state(state="FAILURE", meta={"error": str(ce)})
+        raise
 
     except Exception as exc:
         print(f"[WORKER] Deploy failed: {exc}")
-        with SessionLocal() as db:
-            stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
-            if stand and stand.status == StandStatusEnum.DEPLOYING:
-                stand.status = StandStatusEnum.FREE
-                stand.user_id = None
-                stand.ip_address = None
-                stand.private_key = None
-                db.commit()
-        raise self.retry(exc=exc, countdown=60)
+        if self.request.retries < self.max_retries:
+            raise self.retry(exc=exc, countdown=60)
+        self.update_state(state="FAILURE", meta={"error": str(exc)})
+        raise
 
 
 @celery_app.task(bind=True)
@@ -125,6 +145,7 @@ def cleanup_stand_task(self, stand_id: str):
         os_client.cleanup_lab3_stand(stand_id)
     except Exception as e:
         print(f"[WORKER] OpenStack cleanup failed: {e}")
+        raise self.retry(exc=e, countdown=60)
 
     self.update_state(state="CLEANING", meta={"progress": 90, "message": "Освобождение стенда..."})
 
@@ -138,7 +159,11 @@ def cleanup_stand_task(self, stand_id: str):
             stand.user_id = None
             stand.ip_address = None
             stand.private_key = None
+            stand.student_private_key = None
             stand.vm_details = None
+            stand.network_details = None
+            stand.last_check_result = None
+            stand.lti_context = None
             stand.expires_at = None
             stand.frozen_until = None
             db.commit()

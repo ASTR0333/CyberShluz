@@ -57,9 +57,15 @@ async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(
         )
 
     vms = None
+    network = None
     if stand.vm_details:
         try:
             vms = json.loads(stand.vm_details)
+        except Exception:
+            pass
+    if stand.network_details:
+        try:
+            network = json.loads(stand.network_details)
         except Exception:
             pass
 
@@ -71,4 +77,5 @@ async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(
         frozen_until=stand.frozen_until,
         message=meta.get("message", ""),
         vms=vms,
+        network=network,
     )

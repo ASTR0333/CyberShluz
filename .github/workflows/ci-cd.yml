@@ -1,0 +1,126 @@
+name: CI/CD
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: GitHub Environment containing deployment settings
+        required: true
+        type: choice
+        default: staging
+        options:
+          - staging
+          - production
+      deploy:
+        description: Deploy after successful CI
+        required: true
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cybershluz-${{ github.workflow }}-${{ github.ref }}-${{ inputs.environment || 'production' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  backend:
+    name: Backend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Ruff
+        run: ruff check app tests --output-format=github
+      - name: Tests
+        run: pytest -q
+
+  frontend:
+    name: Frontend checks
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run build
+
+  security:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Gitleaks
+        run: |
+          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz -o /tmp/gitleaks.tgz
+          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          /tmp/gitleaks detect --no-banner --redact --config .gitleaks.toml
+
+  images:
+    name: Compose build
+    runs-on: ubuntu-latest
+    needs: [backend, frontend, security]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: Prepare non-secret build environment
+        run: cp .env.example .env
+      - name: Validate Compose model
+        run: docker compose --env-file .env --project-name cybershluz-ci config --quiet
+      - name: Build application images
+        run: docker compose --env-file .env --project-name cybershluz-ci build backend celery_worker celery_beat frontend
+      - name: Verify non-root containers
+        run: |
+          test "$(docker compose --env-file .env --project-name cybershluz-ci run --rm --no-deps --entrypoint id backend -u)" != "0"
+          test "$(docker compose --env-file .env --project-name cybershluz-ci run --rm --no-deps --entrypoint id frontend -u)" != "0"
+
+  deploy:
+    name: Deploy complete stack
+    needs: images
+    if: >-
+      github.event_name == 'push' ||
+      (github.event_name == 'workflow_dispatch' && inputs.deploy)
+    environment: ${{ inputs.environment || 'production' }}
+    runs-on: ${{ fromJSON(vars.DEPLOY_RUNNER || '["self-hosted","linux"]') }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Write environment file
+        shell: bash
+        env:
+          ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
+        run: |
+          test -n "$ENV_FILE_CONTENT" || { echo "ENV_FILE secret is empty" >&2; exit 1; }
+          umask 077
+          printf '%s\n' "$ENV_FILE_CONTENT" > .env.deploy
+          sed -i 's/\r$//' .env.deploy
+      - name: Deploy and verify
+        shell: bash
+        env:
+          COMPOSE_PROJECT_NAME: ${{ vars.COMPOSE_PROJECT_NAME || 'cybershluz' }}
+        run: bash scripts/deploy.sh --env-file .env.deploy --project-name "$COMPOSE_PROJECT_NAME" --pull
+      - name: Remove plaintext environment file
+        if: always()
+        shell: bash
+        run: rm -f .env.deploy

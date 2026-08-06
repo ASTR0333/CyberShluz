@@ -3,8 +3,8 @@
 
 Студент открывает интерактивную SSH-сессию к публичному IP своего стенда прямо
 из браузера (xterm.js на фронте). Бэкенд проксирует поток: байты из WebSocket →
-в SSH-канал и обратно. Доступ к ВМ — тем же сервисным механизмом, что и bootstrap
-(VM_DEFAULT_USER / VM_DEFAULT_PASSWORD), студенту учётка не раскрывается.
+в SSH-канал и обратно. Бэкенд использует отдельный ключ непривилегированной
+учётной записи student; парольная аутентификация не используется.
 
 Авторизация: JWT передаётся query-параметром `token` (браузерный WebSocket не
 умеет слать заголовок Authorization). Студент может открыть только свой стенд,
@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import logging
 
@@ -60,13 +61,31 @@ def _resolve_stand(stand_id: str, token: str):
         db.close()
 
 
-def _open_ssh_shell(ip: str):
+def _load_private_key(private_key: str):
+    for key_class in (paramiko.Ed25519Key, paramiko.RSAKey, paramiko.ECDSAKey):
+        try:
+            return key_class.from_private_key(io.StringIO(private_key))
+        except Exception:
+            continue
+    raise ValueError("Unsupported SSH private key format")
+
+
+def _open_ssh_shell(ip: str, stand_id: str):
+    db = SessionLocal()
+    try:
+        stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
+        if not stand or not stand.student_private_key:
+            raise ValueError("The stand has no student SSH key")
+        private_key = stand.student_private_key
+    finally:
+        db.close()
+
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())   
     client.connect(
         hostname=ip,
-        username=settings.VM_DEFAULT_USER,
-        password=settings.VM_DEFAULT_PASSWORD,
+        username=settings.VM_STUDENT_USER,
+        pkey=_load_private_key(private_key),
         timeout=12,
         banner_timeout=15,
         auth_timeout=15,
@@ -91,7 +110,7 @@ async def stand_terminal(websocket: WebSocket, stand_id: str):
 
     loop = asyncio.get_event_loop()
     try:
-        client, chan = await loop.run_in_executor(None, _open_ssh_shell, ip)
+        client, chan = await loop.run_in_executor(None, _open_ssh_shell, ip, stand_id)
     except Exception as exc:   
         logger.warning("[TERM] SSH к %s не удался: %s", ip, exc)
         await websocket.send_text(

@@ -19,7 +19,8 @@ class Settings(BaseSettings):
     FREEZE_DURATION_HOURS: int = 24
     
      
-    MAX_CLUSTER_UTILIZATION: float = 0.90   
+    MAX_CLUSTER_UTILIZATION: float = 0.90
+    ENABLE_MOCK_CHECKS: bool = False
     
      
     OS_AUTH_URL: Optional[str] = None
@@ -29,13 +30,12 @@ class Settings(BaseSettings):
     OS_USER_DOMAIN_NAME: str = "Default"
     OS_PROJECT_DOMAIN_NAME: str = "Default"
     OS_REGION_NAME: str = "RegionOne"
-    OS_NETWORK_NAME: str = "Local network"
+    OS_NETWORK_NAME: str = "public"
 
      
      
-    VM_DEFAULT_USER: str = "student"
-     
-    VM_DEFAULT_PASSWORD: str = "Pa$$w0rd"
+    VM_ADMIN_USER: str = "labadmin"
+    VM_STUDENT_USER: str = "student"
 
      
     JWT_SECRET_KEY: str = "change-me-in-env"
@@ -47,14 +47,14 @@ class Settings(BaseSettings):
      
      
      
-    LTI_ISSUER: str = "http://10.77.106.216/moodle"
-    LTI_CLIENT_ID: str = "YSjQZukRoG5djXL"   
+    LTI_ISSUER: str = ""
+    LTI_CLIENT_ID: str = ""
     LTI_DEPLOYMENT_ID: str = "1"
-    LTI_AUTH_LOGIN_URL: str = "http://10.77.106.216/moodle/mod/lti/auth.php"
-    LTI_AUTH_TOKEN_URL: str = "http://10.77.106.216/moodle/mod/lti/token.php"
-    LTI_KEYSET_URL: str = "http://10.77.106.216/moodle/mod/lti/certs.php"
+    LTI_AUTH_LOGIN_URL: str = ""
+    LTI_AUTH_TOKEN_URL: str = ""
+    LTI_KEYSET_URL: str = ""
      
-    LTI_FRONTEND_BASE_URL: str = "http://10.77.106.250"
+    LTI_FRONTEND_BASE_URL: str = ""
      
     LTI_PRIVATE_KEY_PATH: str = "/app/ssh_keys/lti/tool_private.pem"
     LTI_KEY_ID: str = "kibershluz-tool-key-1"

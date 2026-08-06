@@ -8,6 +8,39 @@ export interface DeployRequest {
   user_id: string;
   lab_id: number;
   role: 'student' | 'teacher';
+  deployment?: DeploymentConfig;
+}
+
+export interface NetworkDeploymentSpec {
+  cidr: string;
+  gateway: string;
+  dhcp_start: string;
+  dhcp_end: string;
+  dns_nameservers: string[];
+  external_network: string;
+}
+
+export type VMRole = 'L-MS' | 'L-NFS' | 'L-PGSQL' | 'W-DC' | 'V-HYPERV';
+
+export interface VMDeploymentSpec {
+  role: VMRole;
+  image: string;
+  flavor: string;
+  ip: string;
+  enabled: boolean;
+}
+
+export interface DeploymentConfig {
+  network: NetworkDeploymentSpec;
+  vms: VMDeploymentSpec[];
+}
+
+export interface DeploymentOptions {
+  default: DeploymentConfig;
+  images: string[];
+  flavors: string[];
+  external_networks: string[];
+  catalog_error?: string | null;
 }
 
 export interface DeployResponse {
@@ -34,6 +67,11 @@ export interface StandStatusResponse {
   frozen_until: string | null;
   message?: string;
   vms?: Record<string, VMInfo>;
+  network?: {
+    cidr?: string;
+    gateway?: string;
+    external_network?: string;
+  };
 }
 
 export interface CheckResponse {
@@ -43,7 +81,7 @@ export interface CheckResponse {
 }
 
 export interface CheckResultResponse {
-  status: 'PASSED' | 'FAILED' | 'CHECKING' | 'ERROR';
+  status: 'PASSED' | 'FAILED' | 'CHECKING' | 'ERROR' | 'REVIEW_REQUIRED';
   log: string;
   details?: Record<string, boolean>;
 }

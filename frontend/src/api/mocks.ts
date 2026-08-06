@@ -10,6 +10,7 @@ import type {
   AuditEntry,
   PoolProject,
   StudentStand,
+  DeploymentOptions,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
@@ -92,6 +93,9 @@ export const authApi = {
 
 export const mockApi = {
 
+  getDeploymentOptions: (): Promise<DeploymentOptions> =>
+    apiFetch('/deployment-options'),
+
   deploy: (request: DeployRequest): Promise<DeployResponse> =>
     apiFetch('/deploy', {
       method: 'POST',
@@ -107,10 +111,13 @@ export const mockApi = {
       body: JSON.stringify({ reason: reason || 'Запрос помощи' }),
     }),
 
-  check: (stand_id: string, lab_template?: string): Promise<CheckResponse> =>
+  check: (stand_id: string, manual_confirmations: string[] = [], lab_template?: string): Promise<CheckResponse> =>
     apiFetch(`/check/${stand_id}`, {
       method: 'POST',
-      body: JSON.stringify({ lab_template: lab_template || 'lab03_cyber' }),
+      body: JSON.stringify({
+        lab_template: lab_template || 'lab03_cyber',
+        manual_confirmations,
+      }),
     }),
 
   getCheckResult: (stand_id: string): Promise<CheckResultResponse> =>

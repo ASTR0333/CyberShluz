@@ -4,7 +4,7 @@ import os
 import tempfile
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db, SessionLocal
@@ -12,11 +12,18 @@ from app.core.models import Stand, StandStatusEnum
 from app.core.security import assert_stand_owner_or_teacher, require_student
 from app.services.checker_service import CheckerService
 from app.tasks.deploy import cleanup_stand_task
+from app.core.config import settings
 
 RESULTS_DB: dict[str, dict] = {}
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
+
+MANUAL_CHECKS = {
+    "w_dc_services": "На W-DC запущены Storage Node Service, Catalog Browser Service и Elasticsearch",
+    "w_dc_registered": "w-dc.cyberprotect.test отображается в списке узлов хранения",
+    "repositories_present": "Хранилища RepoW и RepoL созданы и отображаются в веб-консоли",
+}
 
 
 def push_lti_grade(stand_id: str, score_given: float = 100.0) -> None:
@@ -53,7 +60,8 @@ def push_lti_grade(stand_id: str, score_given: float = 100.0) -> None:
 
 
 class CheckRequest(BaseModel):
-    lab_template: str = "lab03_cyber"
+    lab_template: str = Field(default="lab03_cyber", pattern=r"^[a-z0-9_]+$")
+    manual_confirmations: list[str] = Field(default_factory=list)
 
 
 @router.post(
@@ -69,6 +77,9 @@ async def start_check(
     db: Session = Depends(get_db),
     user=Depends(require_student),
 ):
+    if request.lab_template != "lab03_cyber":
+        raise HTTPException(status_code=422, detail="Поддерживается только шаблон lab03_cyber")
+
     stand = db.query(Stand).filter(Stand.id == stand_id).first()
     if not stand:
         raise HTTPException(status_code=404, detail="Стенд не найден")
@@ -79,24 +90,29 @@ async def start_check(
 
     try:
         vm_results = json.loads(stand.vm_details)
-        lms_ip = vm_results.get("L-MS", {}).get("floating_ip")
-        nfs_ip = vm_results.get("L-NFS", {}).get("floating_ip")
-        
-         
-        stand_ips = [ip for ip in [lms_ip, nfs_ip] if ip]
-        
-        if not stand_ips:
-              
-             if stand.ip_address:
-                 stand_ips = [stand.ip_address]
-             else:
-                 raise HTTPException(status_code=400, detail="Не удалось определить IP-адреса машин для проверки")
-    except Exception as e:
+        lms_ip = vm_results.get("L-MS", {}).get("floating_ip") or stand.ip_address
+        if not lms_ip:
+            raise ValueError("У L-MS нет Floating IP")
+
+        stand_hosts = {"L-MS": {"address": lms_ip}}
+        for role in ("L-NFS", "L-PGSQL"):
+            vm = vm_results.get(role, {})
+            address = vm.get("ip") or vm.get("expected_ip")
+            if not address:
+                raise ValueError(f"В топологии отсутствует адрес {role}")
+            stand_hosts[role] = {"address": address, "proxy_jump": lms_ip}
+    except (ValueError, TypeError, json.JSONDecodeError) as e:
         logger.error(f"Error parsing vm_details for stand {stand_id}: {e}")
-        if stand.ip_address:
-            stand_ips = [stand.ip_address]
-        else:
-            raise HTTPException(status_code=400, detail="Ошибка при определении IP-адресов стенда")
+        raise HTTPException(status_code=400, detail=f"Ошибка топологии для проверки: {e}")
+
+    confirmations = set(request.manual_confirmations)
+    unknown_confirmations = confirmations - set(MANUAL_CHECKS)
+    if unknown_confirmations:
+        raise HTTPException(
+            status_code=422,
+            detail="Неизвестные ручные подтверждения: " + ", ".join(sorted(unknown_confirmations)),
+        )
+    missing_manual = [key for key in MANUAL_CHECKS if key not in confirmations]
 
     ssh_key_content = stand.private_key
     stand_id_str = str(stand_id)
@@ -106,14 +122,33 @@ async def start_check(
         "log": "Проверка запущена. Выполняются тесты на L-MS и L-NFS...",
         "details": {}
     }
+    stand.last_check_result = json.dumps(RESULTS_DB[stand_id_str], ensure_ascii=False)
+    db.commit()
 
     if not ssh_key_content or "MOCK" in ssh_key_content or "SIMULATED" in ssh_key_content:
+        if not (settings.APP_ENV == "development" and settings.ENABLE_MOCK_CHECKS):
+            result = {
+                "status": "ERROR",
+                "log": "Автоматическая проверка недоступна: у стенда нет рабочего SSH-ключа.",
+                "details": {"ssh_accessible": False},
+            }
+            RESULTS_DB[stand_id_str] = result
+            stand.last_check_result = json.dumps(result, ensure_ascii=False)
+            db.commit()
+            return {
+                "stand_id": stand_id_str,
+                "check_task_id": stand_id_str,
+                "status": "ERROR",
+                "message": result["log"],
+            }
+
          
         async def mock_check():
             import asyncio
             await asyncio.sleep(2)
+            status_value = "REVIEW_REQUIRED" if missing_manual else "PASSED"
             RESULTS_DB[stand_id_str] = {
-                "status": "PASSED",
+                "status": status_value,
                 "log": (
                     "✅ [L-MS] Проверка доступности (Порт 9877) — OK\n"
                     "✅ [L-NFS] Проверка Hostname (cyberprotect.test) — OK\n"
@@ -126,9 +161,16 @@ async def start_check(
                     "port_9877_open": True,
                     "snapapi_loaded": True,
                     "acronis_active": True,
+                    "manual_confirmed": not missing_manual,
                 }
             }
-            push_lti_grade(stand_id_str, score_given=100.0)
+            with SessionLocal() as db_session:
+                db_stand = db_session.query(Stand).filter(Stand.id == stand_id).first()
+                if db_stand:
+                    db_stand.last_check_result = json.dumps(RESULTS_DB[stand_id_str], ensure_ascii=False)
+                    db_session.commit()
+            if not missing_manual:
+                push_lti_grade(stand_id_str, score_given=100.0)
         background_tasks.add_task(mock_check)
     else:
         checker = CheckerService.from_env()
@@ -141,11 +183,22 @@ async def start_check(
                 try:
                     result = await checker.check_stand(
                         stand_id=stand_id_str,
-                        stand_ips=stand_ips,
-                        ssh_user="student",
+                        stand_hosts=stand_hosts,
+                        ssh_user=settings.VM_ADMIN_USER,
                         ssh_key_path=tmp_key.name,
                         lab_template=request.lab_template,
                     )
+
+                    if result.status == "PASSED" and missing_manual:
+                        result.status = "REVIEW_REQUIRED"
+                        result.details["manual_confirmed"] = False
+                        checklist = "\n".join(f"  - {MANUAL_CHECKS[key]}" for key in missing_manual)
+                        result.log += (
+                            "\n\nАвтоматические проверки пройдены. Для завершения подтвердите вручную:\n"
+                            + checklist
+                        )
+                    elif result.status == "PASSED":
+                        result.details["manual_confirmed"] = True
 
                     check_data = {
                         "status": result.status,
@@ -157,16 +210,19 @@ async def start_check(
                     with SessionLocal() as db_session:
                         db_stand = db_session.query(Stand).filter(Stand.id == stand_id).first()
                         if db_stand:
-                            db_stand.last_check_result = json.dumps(check_data)
+                            db_stand.last_check_result = json.dumps(check_data, ensure_ascii=False)
                             if result.status == "PASSED":
                                  
                                 db_stand.status = StandStatusEnum.CLEANING
                                 db_session.commit()
                                 logger.info("Stand %s PASSED. Triggering cleanup.", stand_id)
-                                 
-                                 
+                                try:
+                                    cleanup_stand_task.delay(stand_id_str)
+                                except Exception:
+                                    db_stand.status = StandStatusEnum.READY
+                                    db_session.commit()
+                                    raise
                                 push_lti_grade(stand_id_str, score_given=100.0)
-                                cleanup_stand_task.delay(stand_id_str)
                             else:
                                 db_session.commit()
                 except Exception as e:
@@ -176,6 +232,14 @@ async def start_check(
                         "log": f"Сбой проверки: {e}",
                         "details": {},
                     }
+                    with SessionLocal() as db_session:
+                        db_stand = db_session.query(Stand).filter(Stand.id == stand_id).first()
+                        if db_stand:
+                            db_stand.last_check_result = json.dumps(
+                                RESULTS_DB[stand_id_str],
+                                ensure_ascii=False,
+                            )
+                            db_session.commit()
 
         background_tasks.add_task(run_check_task)
 
@@ -196,6 +260,11 @@ async def get_check_result(stand_id: int, db: Session = Depends(get_db), user=De
     if stand:
         assert_stand_owner_or_teacher(user, stand.user_id)
     result = RESULTS_DB.get(str(stand_id))
+    if not result and stand and stand.last_check_result:
+        try:
+            result = json.loads(stand.last_check_result)
+        except json.JSONDecodeError:
+            result = None
     if not result:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -1,8 +1,34 @@
-- name: "Lab 3 — проверка конфигурации стенда Cyber Protect"
-  hosts: all
+---
+- name: "Lab 3 - проверка имён Linux-машин"
+  hosts: lms:nfs:pgsql
+  gather_facts: false
+  any_errors_fatal: false
+  tasks:
+    - name: "1.1 Hostname точно соответствует роли в домене cyberprotect.test"
+      ansible.builtin.command: hostname
+      register: hostname_out
+      changed_when: false
+      failed_when: (hostname_out.stdout | trim | lower) != (expected_hostname | lower)
+      tags: [hostname]
+
+- name: "Lab 3 - проверка сервера управления L-MS"
+  hosts: lms
+  gather_facts: false
+  any_errors_fatal: false
+  tasks:
+    - name: "2.1 Порт веб-консоли 9877 слушает на L-MS"
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9877
+        state: started
+        timeout: 8
+      tags: [management, web]
+
+- name: "Lab 3 - проверка узла хранения L-NFS"
+  hosts: nfs
   become: true
   become_method: sudo
-  gather_facts: true
+  gather_facts: false
   any_errors_fatal: false
   vars:
     required_fw_ports:
@@ -10,60 +36,48 @@
       - "9876/tcp"
       - "9852/tcp"
       - "9862/tcp"
-
   tasks:
-    - name: "1.1 Hostname относится к домену cyberprotect.test"
-      ansible.builtin.shell: hostname
-      register: hostname_out
-      changed_when: false
-      failed_when: "'cyberprotect.test' not in (hostname_out.stdout | default(''))"
-      tags: [group:hostname]
-
-    - name: "1.2 На L-NFS открыты firewall-порты Acronis (7780, 9876, 9852, 9862)"
-      ansible.builtin.shell: |
-        set -o pipefail
-        firewall-cmd --list-ports 2>/dev/null || iptables -S 2>/dev/null
-      args:
-        executable: /bin/bash
+    - name: "3.1 На L-NFS открыты firewall-порты Acronis"
+      ansible.builtin.command: firewall-cmd --list-ports
       register: fw_ports
       changed_when: false
-      failed_when: "item.split('/')[0] not in (fw_ports.stdout | default(''))"
-      loop: "{{ required_fw_ports }}"
-      when: "'nfs' in (ansible_hostname | default('') | lower)"
-      tags: [group:firewall]
+      failed_when: required_fw_ports | difference(fw_ports.stdout.split()) | length > 0
+      tags: [firewall]
 
-    - name: "2.1 Модуль ядра snapapi загружен (L-NFS)"
-      ansible.builtin.shell: "lsmod | grep -E '^snapapi'"
+    - name: "3.2 Модуль ядра snapapi загружен на L-NFS"
+      ansible.builtin.shell: "set -o pipefail && lsmod | grep -E '^snapapi\\b'"
+      args:
+        executable: /bin/bash
       register: snapapi_mod
       changed_when: false
       failed_when: snapapi_mod.rc != 0
-      when: "'nfs' in (ansible_hostname | default('') | lower)"
-      tags: [group:snapapi]
+      tags: [snapapi]
 
-    - name: "3.1 Запущен хотя бы один сервис Acronis (L-NFS)"
-      ansible.builtin.shell: |
-        set -o pipefail
-        systemctl list-units --type=service --state=running --no-legend \
-          | awk '{print $1}' | grep -iE '^acronis' || true
+    - name: "3.3 На L-NFS запущены службы Acronis или Cyber Protect"
+      ansible.builtin.shell: >-
+        set -o pipefail &&
+        systemctl list-units --type=service --state=running --no-legend |
+        awk '{print $1}' | grep -iE 'acronis|cyber.?protect'
       args:
         executable: /bin/bash
       register: acronis_running
       changed_when: false
-      failed_when: acronis_running.stdout | trim | length == 0
-      when: "'nfs' in (ansible_hostname | default('') | lower)"
-      tags: [group:acronis]
+      failed_when: acronis_running.rc != 0 or (acronis_running.stdout | trim | length == 0)
+      tags: [services]
 
-    - name: "4.1 Порт веб-консоли 9877 слушает (L-MS)"
-      ansible.builtin.wait_for:
-        port: 9877
-        state: started
-        timeout: 5
-      when: "'ms' in (ansible_hostname | default('') | lower) and 'nfs' not in (ansible_hostname | default('') | lower)"
-      tags: [group:web]
+    - name: "3.4 Каталог управляемого хранилища /BackupL существует"
+      ansible.builtin.stat:
+        path: /BackupL
+      register: backupl_dir
+      failed_when: not backupl_dir.stat.exists or not backupl_dir.stat.isdir
+      tags: [storage]
 
-    - name: "5.0 Итоговый структурированный отчёт"
+- name: "Lab 3 - структурированный итог"
+  hosts: lms:nfs:pgsql
+  gather_facts: false
+  tasks:
+    - name: "4.1 Машина доступна для автоматической проверки"
       ansible.builtin.debug:
         msg:
-          hostname: "{{ hostname_out.stdout | default('?') }}"
-          snapapi_loaded: "{{ (snapapi_mod.rc | default(1)) == 0 }}"
-          acronis_units: "{{ acronis_running.stdout_lines | default([]) }}"
+          host: "{{ inventory_hostname }}"
+          expected_hostname: "{{ expected_hostname }}"
