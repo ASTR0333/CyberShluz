@@ -1,0 +1,469 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>КиберШлюз — Шлюз оркестрации лабораторных стендов · Документация</title>
+<style>
+  :root{
+    --navy:#141f36; --navy-deep:#0f1729; --blue:#3164c9; --blue-light:#5382e6;
+    --blue-accent:#2b61c4; --icon:#214389;
+    --surface:#f4f6fa; --border:#e5e8ef; --ink:#0b2552; --muted:#6b7280;
+    --ok:#1f9d57; --warn:#c98a16; --bad:#c0392b;
+    --code-bg:#0d1729;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,Arial,sans-serif;
+    color:var(--ink);background:var(--surface);line-height:1.6;font-size:15px}
+  a{color:var(--blue);text-decoration:none}
+  a:hover{text-decoration:underline}
+  code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+
+  /* ===== Header ===== */
+  header.hero{background:linear-gradient(135deg,var(--navy) 0%,var(--navy-deep) 60%,#0a1a3a 100%);
+    color:#fff;padding:54px 32px 60px;position:relative;overflow:hidden}
+  header.hero::after{content:"";position:absolute;right:-120px;top:-80px;width:420px;height:420px;
+    background:radial-gradient(circle,rgba(83,130,230,.35),transparent 70%);}
+  .hero-inner{max-width:1180px;margin:0 auto;position:relative;z-index:1}
+  .brand{display:flex;align-items:center;gap:14px;margin-bottom:26px}
+  .brand .mark{width:38px;height:38px;border-radius:9px;background:linear-gradient(135deg,var(--blue-light),var(--blue-accent));
+    display:flex;align-items:center;justify-content:center;font-weight:800;color:#fff;font-size:20px;box-shadow:0 6px 18px rgba(43,97,196,.5)}
+  .brand .name{font-weight:700;letter-spacing:.16em;text-transform:uppercase;font-size:13px;color:#bcd0ff}
+  header.hero h1{font-size:42px;margin:0 0 10px;font-weight:800;line-height:1.1}
+  header.hero p.lead{font-size:18px;color:#c7d6f5;max-width:760px;margin:0 0 24px}
+  .pills{display:flex;flex-wrap:wrap;gap:8px}
+  .pill{background:rgba(255,255,255,.08);border:1px solid rgba(131,168,247,.35);color:#dbe6ff;
+    padding:5px 12px;border-radius:999px;font-size:12px;font-weight:600}
+  .meta{margin-top:26px;display:flex;flex-wrap:wrap;gap:28px;font-size:13px;color:#9fb5e0}
+  .meta b{color:#fff;font-weight:700}
+
+  /* ===== Layout ===== */
+  .wrap{max-width:1180px;margin:0 auto;padding:0 32px;display:grid;grid-template-columns:248px 1fr;gap:40px;align-items:start}
+  nav.toc{position:sticky;top:24px;align-self:start;margin-top:32px;background:#fff;border:1px solid var(--border);
+    border-radius:14px;padding:18px 16px;font-size:13.5px;max-height:calc(100vh - 48px);overflow:auto}
+  nav.toc h4{margin:0 0 10px;font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  nav.toc a{display:block;padding:6px 10px;border-radius:8px;color:#33415a;border-left:2px solid transparent}
+  nav.toc a:hover{background:var(--surface);text-decoration:none;color:var(--blue-accent)}
+  nav.toc .grp{margin-top:12px}
+  main{padding:32px 0 80px;min-width:0}
+
+  section{background:#fff;border:1px solid var(--border);border-radius:16px;padding:30px 34px;margin-bottom:22px;
+    box-shadow:0 1px 2px rgba(20,31,54,.04)}
+  section h2{font-size:25px;margin:0 0 6px;font-weight:800;color:var(--navy);scroll-margin-top:20px}
+  section .kicker{font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--blue-accent);font-weight:700;margin-bottom:6px}
+  section h3{font-size:17px;margin:26px 0 8px;color:var(--navy)}
+  section h4{font-size:14px;margin:18px 0 6px;color:#33415a;text-transform:uppercase;letter-spacing:.05em}
+  p{margin:10px 0}
+  ul,ol{margin:10px 0;padding-left:22px}
+  li{margin:5px 0}
+  hr{border:0;border-top:1px solid var(--border);margin:24px 0}
+
+  .lead-strip{border-left:4px solid var(--blue-light);background:var(--surface);padding:14px 18px;border-radius:0 10px 10px 0;margin:16px 0}
+  .note{border-left:4px solid var(--warn);background:#fff8ec;padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px}
+  .danger{border-left:4px solid var(--bad);background:#fdeeec;padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px}
+  .ok-box{border-left:4px solid var(--ok);background:#eefaf2;padding:12px 16px;border-radius:0 10px 10px 0;margin:14px 0;font-size:14px}
+
+  pre{background:var(--code-bg);color:#d6e2ff;padding:16px 18px;border-radius:12px;overflow:auto;font-size:13px;line-height:1.55;margin:14px 0}
+  pre .c{color:#7e93c4}.pre .k{color:#7fb0ff}
+  p code,li code,td code{background:#eef1f8;color:#214389;padding:1px 6px;border-radius:5px;font-size:.92em}
+
+  table{width:100%;border-collapse:collapse;margin:16px 0;font-size:13.5px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+  th{background:var(--surface);color:var(--navy);font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em}
+  tr:hover td{background:#fafbfe}
+
+  .grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin:16px 0}
+  .card{border:1px solid var(--border);border-radius:12px;padding:16px;background:#fff}
+  .card .t{font-weight:700;color:var(--navy);margin-bottom:4px;display:flex;align-items:center;gap:8px}
+  .card .d{font-size:13px;color:var(--muted)}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block}
+
+  .badge{display:inline-block;padding:2px 9px;border-radius:999px;font-size:11px;font-weight:700;letter-spacing:.02em}
+  .b-ok{background:#e3f6ec;color:#147a42}.b-part{background:#fdf3e0;color:#9a6a12}.b-blue{background:#e7eefb;color:#234a9e}
+
+  /* state machine */
+  .fsm{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:18px 0;font-size:13px}
+  .st{padding:8px 14px;border-radius:10px;font-weight:700;color:#fff;white-space:nowrap}
+  .arrow{color:var(--muted);font-weight:700}
+  .s-free{background:#6b7280}.s-pend{background:#8a6d1f}.s-dep{background:#c98a16}.s-ready{background:#1f9d57}
+  .s-freeze{background:#2b8fd0}.s-clean{background:#b0506b}
+
+  .score{font-weight:800;font-size:15px}
+  .score.hi{color:var(--ok)}.score.mid{color:var(--warn)}
+
+  footer{background:var(--navy-deep);color:#9fb5e0;text-align:center;padding:30px;font-size:13px}
+  footer b{color:#fff}
+
+  @media(max-width:900px){
+    .wrap{grid-template-columns:1fr;padding:0 18px}
+    nav.toc{display:none}
+    header.hero h1{font-size:32px}
+    section{padding:22px 18px}
+  }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="hero-inner">
+    <div class="brand">
+      <div class="mark">КШ</div>
+      <div class="name">Кибер Инфраструктура · Шлюз оркестрации</div>
+    </div>
+    <h1>КиберШлюз</h1>
+    <p class="lead">Безопасный веб-сервис оркестрации облачных лабораторных стендов на платформе
+      «Кибер Инфраструктура» (OpenStack). Управление пулом изолированных сред «on-demand»,
+      сквозная интеграция с LMS Moodle по LTI&nbsp;1.3, предиктивный контроль ёмкости кластера
+      и автоматическая SSH-проверка конфигураций.</p>
+    <div class="pills">
+      <span class="pill">FastAPI · Celery · PostgreSQL</span>
+      <span class="pill">React 19 · Vite · Tailwind</span>
+      <span class="pill">OpenStack SDK · Ansible</span>
+      <span class="pill">LTI 1.3 (RS256 / AGS)</span>
+      <span class="pill">Docker Compose · Nginx</span>
+      <span class="pill">DevSecOps: ruff · bandit · gitleaks · trivy</span>
+    </div>
+    <div class="meta">
+      <span><b>Кейс:</b> Автоматизация работы с лабораторными стендами</span>
+      <span><b>Платформа:</b> Кибер Инфраструктура (КИ)</span>
+      <span><b>Этапов:</b> 5 / 5</span>
+      <span><b>Версия:</b> 0.5</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc">
+    <h4>Содержание</h4>
+    <a href="#about">1 · О проекте</a>
+    <a href="#arch">2 · Архитектура</a>
+    <a href="#fsm">3 · Машина состояний</a>
+    <a href="#stages">4 · Этапы 1–5</a>
+    <div class="grp"></div>
+    <a href="#pool">5 · Пул и изоляция</a>
+    <a href="#capacity">6 · Контроль ёмкости</a>
+    <a href="#async">7 · Асинхронность</a>
+    <a href="#lifecycle">8 · TTL и заморозка</a>
+    <a href="#checker">9 · Движок SSH-проверок</a>
+    <a href="#lti">10 · Интеграция Moodle (LTI)</a>
+    <a href="#terminal">11 · Веб-терминал</a>
+    <a href="#security">12 · ИБ и DevSecOps</a>
+    <a href="#api">13 · API</a>
+    <a href="#deploy">14 · Развёртывание</a>
+  </nav>
+
+  <main>
+
+  <section id="about">
+    <div class="kicker">Обзор</div>
+    <h2>1 · О проекте</h2>
+    <p>Перенос практических лабораторных работ в облако решает проблему доступности ресурсов, но
+      порождает вызовы: рост нагрузки на преподавателей, требование жёсткой изоляции сред, риск
+      исчерпания ёмкости кластера и рутинную ручную проверку конфигураций. <b>КиберШлюз</b> —
+      отказоустойчивый шлюз оркестрации, который:</p>
+    <div class="grid">
+      <div class="card"><div class="t"><span class="dot" style="background:var(--blue)"></span>Раздаёт ресурсы «по требованию»</div>
+        <div class="d">Менеджер заранее подготовленного пула изолированных сред: «1 студент = 1 индивидуальный стенд».</div></div>
+      <div class="card"><div class="t"><span class="dot" style="background:var(--ok)"></span>Контролирует ёмкость КИ</div>
+        <div class="d">Запрос лимитов Nova и блокировка запуска при утилизации &gt; 90% с уведомлением и логом.</div></div>
+      <div class="card"><div class="t"><span class="dot" style="background:var(--blue-light)"></span>Интегрирован с Moodle</div>
+        <div class="d">Сквозной сценарий по LTI&nbsp;1.3: клик «Выполнить ЛР» в LMS → выделение стенда → возврат оценки (AGS).</div></div>
+      <div class="card"><div class="t"><span class="dot" style="background:var(--warn)"></span>Проверяет лабы автоматически</div>
+        <div class="d">Безагентное SSH-подключение и расширяемый движок проверок на Ansible с детальным логом.</div></div>
+    </div>
+    <div class="lead-strip">Ключевой принцип ИБ: сервис <b>не создаёт домены/проекты «на лету»</b> и не требует
+      прав суперадминистратора. Он лишь распределяет заранее подготовленные изолированные среды и возвращает их в пул после очистки.</div>
+  </section>
+
+  <section id="arch">
+    <div class="kicker">Архитектура</div>
+    <h2>2 · Архитектура решения</h2>
+    <p>Все компоненты контейнеризированы и поднимаются одной командой через <code>docker compose</code>.
+      Nginx терминирует трафик и проксирует REST/WebSocket на бэкенд; React-SPA общается с API по <code>/api/v1</code>.</p>
+<pre><span class="c"># Топология docker-compose</span>
+                         ┌─────────────────────────────┐
+   Студент / Moodle ───▶ │   nginx-proxy  (:80)        │  ◀── WebSocket (веб-терминал)
+                         └──────────────┬──────────────┘
+                    /api/v1, /lti       │        /  (статика SPA)
+              ┌──────────────────────┐  │  ┌───────────────────────┐
+              │  backend (FastAPI)   │◀─┴─▶│  frontend (React/Vite) │
+              │  REST · LTI · WS-SSH │     └───────────────────────┘
+              └───────┬──────────────┘
+        ┌─────────────┼───────────────┬───────────────┐
+   ┌────▼────┐   ┌────▼────┐    ┌─────▼─────┐    ┌─────▼──────────────┐
+   │PostgreSQL│   │  Redis  │    │  Celery   │    │  Кибер Инфраструктура│
+   │ состояния│   │ брокер  │    │ worker +  │───▶│  OpenStack API       │
+   │ пул·логи │   │ задач   │    │ beat      │    │  Nova·Neutron·Glance │
+   └─────────┘   └─────────┘    └─────┬─────┘    └──────────────────────┘
+                                      │  paramiko / Ansible (SSH)
+                                      └────────────▶ ВМ стенда (L-MS …)</pre>
+
+    <h3>Слои бэкенда</h3>
+    <table>
+      <tr><th>Слой</th><th>Путь</th><th>Назначение</th></tr>
+      <tr><td>API</td><td><code>app/api/v1/*</code></td><td>Роутеры: deploy, status, freeze, check, cleanup, admin, pubkey, lti, terminal, auth, moodle.</td></tr>
+      <tr><td>Core</td><td><code>app/core/*</code></td><td>Модели SQLAlchemy, <code>openstack_client</code>, <code>pool_manager</code>, security (JWT), пакет <code>lti/</code>.</td></tr>
+      <tr><td>Services</td><td><code>app/services/*</code></td><td>Бизнес-логика LTI (OIDC, валидация id_token, AGS), checker_service.</td></tr>
+      <tr><td>Tasks</td><td><code>app/tasks/*</code></td><td>Celery-задачи: <code>deploy</code>, <code>cleanup</code> (beat-реконсиляция), проверка.</td></tr>
+      <tr><td>Schemas</td><td><code>app/schemas/*</code></td><td>Pydantic-контракты запросов/ответов.</td></tr>
+    </table>
+
+    <h3>Технологический стек</h3>
+    <div class="grid">
+      <div class="card"><div class="t">Backend</div><div class="d">Python · FastAPI · SQLAlchemy · Pydantic · openstacksdk · paramiko · PyJWT</div></div>
+      <div class="card"><div class="t">Очереди</div><div class="d">Celery + Redis (broker/result), celery-beat для периодической реконсиляции TTL.</div></div>
+      <div class="card"><div class="t">Frontend</div><div class="d">React 19 · Vite · Tailwind v4 · react-router 7 · xterm.js (веб-терминал)</div></div>
+      <div class="card"><div class="t">Инфраструктура</div><div class="d">OpenStack API / КИ · Ansible · Nginx · Docker Compose</div></div>
+    </div>
+  </section>
+
+  <section id="fsm">
+    <div class="kicker">Жизненный цикл</div>
+    <h2>3 · Машина состояний стенда</h2>
+    <p>Каждый стенд проходит детерминированную машину состояний; переходы инициируются API и
+      Celery-воркерами, а истечение TTL/заморозки — периодической задачей <code>cleanup_expired_stands</code> (beat).</p>
+    <div class="fsm">
+      <span class="st s-free">FREE</span><span class="arrow">→</span>
+      <span class="st s-dep">DEPLOYING</span><span class="arrow">→</span>
+      <span class="st s-ready">READY</span><span class="arrow">→</span>
+      <span class="st s-clean">CLEANING</span><span class="arrow">→</span>
+      <span class="st s-free">FREE</span>
+    </div>
+    <div class="fsm">
+      <span class="st s-ready">READY</span><span class="arrow">— «нужна помощь» →</span>
+      <span class="st s-freeze">FREEZE&nbsp;(24ч)</span><span class="arrow">— thaw / истёк →</span>
+      <span class="st s-clean">CLEANING</span>
+    </div>
+    <table>
+      <tr><th>Состояние</th><th>Что означает</th><th>Переход</th></tr>
+      <tr><td><span class="badge b-blue">FREE</span></td><td>Слот свободен в пуле.</td><td>→ DEPLOYING при выделении.</td></tr>
+      <tr><td><span class="badge b-part">DEPLOYING</span></td><td>Идёт создание сети и ВМ в КИ.</td><td>→ READY при успехе; → FREE при ошибке (с ретраями).</td></tr>
+      <tr><td><span class="badge b-ok">READY</span></td><td>Стенд готов, выдан публичный IP. <b>Таймер TTL стартует здесь.</b></td><td>→ CLEANING (истёк/завершён) или → FREEZE.</td></tr>
+      <tr><td><span class="badge b-blue">FREEZE</span></td><td>«Техническая поддержка»: автоудаление заморожено на 24ч для аудита.</td><td>→ READY (thaw) или → CLEANING.</td></tr>
+      <tr><td><span class="badge b-part">CLEANING</span></td><td>Удаление ВМ и изолированной сети, возврат слота в пул.</td><td>→ FREE.</td></tr>
+    </table>
+    <div class="ok-box">Таймер времени жизни начинает отсчёт <b>в момент готовности (READY)</b>, а не при постановке в очередь —
+      студент не теряет время лабы на сам деплой. Время отдаётся как UTC-aware ISO, чтобы обратный отсчёт был корректным в любом часовом поясе.</div>
+  </section>
+
+  <section id="stages">
+    <div class="kicker">План реализации</div>
+    <h2>4 · Этапы 1–5</h2>
+    <table>
+      <tr><th>Этап</th><th>Содержание</th><th>Статус</th></tr>
+      <tr><td><b>1</b> · Ядро + API КИ</td><td>Выделение проекта из пула, контроль ёмкости, деплой ВМ из образов Glance, нативные SSH-ключи.</td><td><span class="badge b-ok">Реализовано</span></td></tr>
+      <tr><td><b>2</b> · Асинхронный ЖЦ + TTL</td><td>Celery-очереди, автоочистка через 2ч, заморозка 24ч, UI управления лимитами «на лету».</td><td><span class="badge b-ok">Реализовано</span></td></tr>
+      <tr><td><b>3</b> · Движок SSH-проверок</td><td>Безагентное SSH-подключение, расширяемый движок на Ansible, детальный лог ошибок в UI.</td><td><span class="badge b-ok">Реализовано</span></td></tr>
+      <tr><td><b>4</b> · Интеграция Moodle</td><td>Сквозной LTI&nbsp;1.3 (OIDC + AGS), маппинг пользователя на стенд.</td><td><span class="badge b-ok">Реализовано</span></td></tr>
+      <tr><td><b>5</b> · DevOps / DevSecOps</td><td>Контейнеризация, запуск одной командой, линтеры/анализаторы, non-root, секреты в .env.</td><td><span class="badge b-ok">Реализовано</span></td></tr>
+    </table>
+  </section>
+
+  <section id="pool">
+    <div class="kicker">Этап 1 · Безопасность</div>
+    <h2>5 · Пул сред и реальная изоляция</h2>
+    <p>Пул слотов хранится в PostgreSQL. Выделение — <b>атомарное</b>, чтобы исключить гонку при
+      одновременных запросах: строка свободного стенда блокируется на уровне БД.</p>
+<pre><span class="c"># app/core/pool_manager.py — атомарный захват свободного слота</span>
+stand = (db.query(Stand)
+           .filter(Stand.status == StandStatusEnum.FREE)
+           .with_for_update(skip_locked=True)   <span class="c"># SELECT ... FOR UPDATE SKIP LOCKED</span>
+           .first())
+if not stand:
+    return None            <span class="c"># нет свободных слотов → API отдаёт 503 с понятным текстом</span>
+stand.user_id = user.id
+stand.status  = StandStatusEnum.DEPLOYING</pre>
+
+    <h3>Модель изоляции (Neutron)</h3>
+    <p>На каждый стенд создаётся <b>собственный изолированный L2/L3-сегмент</b> — отдельная сеть Neutron,
+      подсеть <code>10.0.0.0/24</code> и маршрутизатор с внешним шлюзом в публичную сеть. Это в точности
+      модель изоляции из ТЗ («собственные изолированные сети, объединённые с публичной сетью через
+      маршрутизатор») и устраняет коллизию фиксированных IP топологии между параллельными стендами.</p>
+<pre><span class="c"># app/core/openstack_client.py — _ensure_stand_network()</span>
+network = conn.network.create_network(name=f"stand{id}-net")
+subnet  = conn.network.create_subnet(network_id=network.id, cidr="10.0.0.0/24",
+                                      gateway_ip="10.0.0.1", dns_nameservers=["8.8.8.8"])
+router  = conn.network.create_router(name=f"stand{id}-router",
+                                      external_gateway_info={"network_id": public.id})
+conn.network.add_interface_to_router(router, subnet_id=subnet.id)
+<span class="c"># Floating IP выдаётся только L-MS — единственная точка входа стенда;</span>
+<span class="c"># остальные ВМ доступны через неё по внутренней сети 10.0.0.0/24.</span></pre>
+    <p>При очистке сеть, подсеть и маршрутизатор сносятся (<code>_teardown_stand_network</code>),
+      возвращая ресурсы Neutron в проект.</p>
+
+    <h3>Нативные SSH-ключи</h3>
+    <p>Статические пароли в коде для доступа к стендам не используются. Пара ключей генерируется
+      и в Nova загружается <b>только публичная часть</b>; приватный ключ хранится сервисом для
+      Ansible-проверок. ВМ настраиваются через cloud-init: создаётся пользователь с ключом,
+      <code>sudo NOPASSWD</code>, парольная аутентификация SSH отключается.</p>
+    <div class="note">Особенность контура: КИ (Cyber Infrastructure 6.7) не поддерживает server-side
+      генерацию keypair через Nova, поэтому применён документированный путь — генерация ключа на стороне
+      сервиса и загрузка только public-части (аналог <code>vinfra service compute key create --public-key</code>).</div>
+  </section>
+
+  <section id="capacity">
+    <div class="kicker">Этап 1</div>
+    <h2>6 · Предиктивный контроль ёмкости</h2>
+    <p>Перед развёртыванием сервис запрашивает абсолютные лимиты Nova (используемые/максимальные
+      ядра) и вычисляет прогнозируемую утилизацию. При превышении порога <code>MAX_CLUSTER_UTILIZATION</code>
+      (по умолчанию 90%) запуск блокируется: пользователю возвращается <code>423 Locked</code> с понятным
+      сообщением, а отказ фиксируется в административном логе.</p>
+<pre><span class="c"># Гейт в app/api/v1/deploy.py</span>
+utilization = os_client.check_capacity(required_vcpus=...)
+if utilization &gt; settings.MAX_CLUSTER_UTILIZATION:
+    logger.error("[ADMIN_ALERT] деплой отклонён | util=%.1f%% | лимит=90%%", utilization*100)
+    raise HTTPException(status_code=423, detail="Кластер перегружен. Попробуйте позже.")</pre>
+    <div class="note">Дорожная карта: расширение предиктива на RAM и Storage и режим «fail-closed» при
+      недоступности Nova API (сейчас при сетевом сбое возможна мягкая деградация).</div>
+  </section>
+
+  <section id="async">
+    <div class="kicker">Этап 2</div>
+    <h2>7 · Асинхронная архитектура</h2>
+    <p>Все длительные операции (развёртывание, проверка, очистка) вынесены в Celery-воркеры —
+      HTTP-запросы возвращаются мгновенно, UI не блокируется. Прогресс транслируется через состояние
+      задачи и опрашивается фронтендом.</p>
+    <ul>
+      <li><b>Идемпотентность:</b> <code>task_id = stand_id</code> — повторный запуск не плодит дубли.</li>
+      <li><b>Повторные попытки:</b> <code>deploy_stand_task</code> с <code>max_retries=2</code> и backoff — устойчивость к транзиентным сбоям API КИ.</li>
+      <li><b>Реконсиляция:</b> <code>celery-beat</code> периодически переводит истёкшие стенды в <code>CLEANING</code>.</li>
+      <li><b>Визуализация:</b> фронт отображает все состояния машины и прогресс деплоя в реальном времени.</li>
+    </ul>
+  </section>
+
+  <section id="lifecycle">
+    <div class="kicker">Этап 2</div>
+    <h2>8 · Гибкий жизненный цикл и UI настроек</h2>
+    <p>Тайм-ауты не захардкожены — преподаватель управляет ими «на лету» через защищённый UI и API:</p>
+    <table>
+      <tr><th>Действие</th><th>Эндпоинт</th><th>Эффект</th></tr>
+      <tr><td>Глобальные дефолты TTL/заморозки/ёмкости</td><td><code>PUT /api/v1/admin/settings</code></td><td>Применяется к новым стендам немедленно.</td></tr>
+      <tr><td>TTL конкретного стенда</td><td><code>PUT /api/v1/admin/stands/{id}/ttl</code></td><td>Продление/сокращение времени жизни на лету.</td></tr>
+      <tr><td>Заморозка (поддержка)</td><td><code>POST /api/v1/freeze/{id}</code></td><td>Останавливает автоудаление на 24ч для аудита.</td></tr>
+      <tr><td>Разморозка</td><td><code>POST /api/v1/admin/stands/{id}/thaw</code></td><td>FREEZE → READY с новым TTL.</td></tr>
+    </table>
+    <div class="ok-box">Режим «Техническая поддержка» сохраняет «цифровой след» инцидента: стенд не
+      удаляется мгновенно, преподаватель может подключиться и разобрать ошибку студента.</div>
+  </section>
+
+  <section id="checker">
+    <div class="kicker">Этап 3</div>
+    <h2>9 · Движок автоматической SSH-проверки</h2>
+    <p>Сервис безагентно подключается к ВМ студента по SSH, используя нативные ключи, и запускает
+      расширяемый движок проверок на базе <b>Ansible</b>. Плейбуки автоматически обнаруживаются по
+      шаблону <code>ansible/lab&lt;NN&gt;_*.yml</code>, что позволяет добавлять новые лабы без правки кода.</p>
+    <ul>
+      <li>Проверка наличия установленного ПО и состояния служб;</li>
+      <li>Валидация конфигурационных файлов под паттерн конкретной лабы;</li>
+      <li>Проверка открытых сетевых портов (например, Snapdrive на 9877, NFS, СУБД);</li>
+      <li>Детальный лог ошибок выводится в интерфейс (стилизованный терминал с итогом PASSED/FAILED).</li>
+    </ul>
+    <p>Результат проверки сохраняется на стенде и (при интеграции с LMS) отправляется обратно в Moodle оценкой.</p>
+  </section>
+
+  <section id="lti">
+    <div class="kicker">Этап 4</div>
+    <h2>10 · Интеграция с LMS Moodle (LTI 1.3)</h2>
+    <p>Реализован промышленный протокол <b>LTI&nbsp;1.3</b> (приоритетное/бонусное решение): Tool —
+      оркестратор, Platform — Moodle. Сквозной сценарий:</p>
+<pre>Студент в Moodle → «Выполнить ЛР №3»
+  → GET/POST /lti/login   <span class="c"># OIDC third-party initiation, редирект на платформу</span>
+  → POST    /lti/launch   <span class="c"># валидация id_token (RS256 по JWKS платформы),</span>
+                          <span class="c"># маппинг пользователя, сессия оркестратора</span>
+  → редирект студента в UI КиберШлюза (он сам запускает стенд)
+  ... после прохождения проверки ЛР3 ...
+  → AGS: client_credentials + Score → оценка возвращается в журнал Moodle</pre>
+    <ul>
+      <li>Подпись/проверка JWT — <b>RS256</b> (PyJWT + httpx), собственный JWKS Tool отдаётся на <code>/lti/jwks</code>;</li>
+      <li>Валидация <code>iss</code>, <code>aud</code> (client_id), nonce, срока действия id_token;</li>
+      <li>AGS (Assignment &amp; Grades Service) — асинхронный возврат оценки после <code>PASSED</code>;</li>
+      <li>Безошибочный маппинг: метаданные курса/пользователя LTI → персональный стенд студента.</li>
+    </ul>
+  </section>
+
+  <section id="terminal">
+    <div class="kicker">UX</div>
+    <h2>11 · Веб-терминал к стенду</h2>
+    <p>Студенту не нужен локальный SSH-клиент: интерактивная сессия открывается прямо в браузере.
+      Бэкенд проксирует WebSocket в SSH-канал (paramiko) к точке входа стенда, фронтенд рендерит
+      терминал на <b>xterm.js</b>.</p>
+    <ul>
+      <li>Эндпоинт <code>WS /api/v1/stand/{id}/terminal</code>; авторизация по JWT в query-параметре;</li>
+      <li>Проверка владельца: студент открывает только свой стенд, преподаватель/админ — любой;</li>
+      <li>Доступ к ВМ — тем же сервисным механизмом, что и bootstrap (учётные данные студенту не раскрываются);</li>
+      <li>Поддержка изменения размера PTY (resize) и корректное закрытие сессии.</li>
+    </ul>
+  </section>
+
+  <section id="security">
+    <div class="kicker">Этап 5</div>
+    <h2>12 · Информационная безопасность и DevSecOps</h2>
+    <div class="grid">
+      <div class="card"><div class="t">Без суперадмина</div><div class="d">Сервис не создаёт домены/проекты «на лету» — только распределяет пул. Минимизация прав.</div></div>
+      <div class="card"><div class="t">Изоляция сред</div><div class="d">Отдельная сеть/маршрутизатор Neutron на каждый стенд.</div></div>
+      <div class="card"><div class="t">Нативные ключи</div><div class="d">SSH по ключам; парольная аутентификация на ВМ отключается через cloud-init.</div></div>
+      <div class="card"><div class="t">Секреты в .env</div><div class="d">Критичные значения — только в переменных окружения, не в коде.</div></div>
+      <div class="card"><div class="t">JWT-доступ</div><div class="d">Ролевая модель (student/teacher/admin), проверка владельца стенда.</div></div>
+      <div class="card"><div class="t">Non-root контейнеры</div><div class="d">Бэкенд работает от непривилегированного пользователя.</div></div>
+    </div>
+    <h3>Пайплайн DevSecOps (CI)</h3>
+    <table>
+      <tr><th>Инструмент</th><th>Назначение</th></tr>
+      <tr><td><code>ruff</code></td><td>Линт и статический анализ Python (правила E/F/W/B).</td></tr>
+      <tr><td><code>bandit</code></td><td>Поиск уязвимостей в коде Python.</td></tr>
+      <tr><td><code>gitleaks</code></td><td>Проверка на отсутствие секретов в репозитории.</td></tr>
+      <tr><td><code>trivy</code></td><td>Сканирование уязвимостей образов и зависимостей.</td></tr>
+    </table>
+    <p>Все проверки enforced в CI (без <code>|| true</code>); деплой на self-hosted runner после прохождения пайплайна.</p>
+  </section>
+
+  <section id="api">
+    <div class="kicker">Справочник</div>
+    <h2>13 · Ключевые эндпоинты API</h2>
+    <p>Полная спецификация доступна автоматически (OpenAPI): <code>/docs</code> (Swagger UI) и <code>/redoc</code>.</p>
+    <table>
+      <tr><th>Метод</th><th>Путь</th><th>Описание</th></tr>
+      <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/deploy</code></td><td>Выделить слот и асинхронно развернуть стенд (контроль ёмкости + лимит «1 активный стенд»).</td></tr>
+      <tr><td><span class="badge b-blue">GET</span></td><td><code>/api/v1/status/{id|my}</code></td><td>Статус стенда: состояние, IP, TTL, топология ВМ.</td></tr>
+      <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/check/{id}</code></td><td>Запустить Ansible-проверку конфигурации стенда.</td></tr>
+      <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/freeze/{id}</code></td><td>Заморозить автоудаление на 24ч (поддержка).</td></tr>
+      <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/cleanup/{id}</code></td><td>Завершить стенд и вернуть слот в пул.</td></tr>
+      <tr><td><span class="badge b-blue">WS</span></td><td><code>/api/v1/stand/{id}/terminal</code></td><td>Веб-терминал (WebSocket → SSH).</td></tr>
+      <tr><td><span class="badge b-part">*</span></td><td><code>/api/v1/lti/{login,launch,jwks}</code></td><td>LTI 1.3: OIDC-инициация, launch, JWKS Tool.</td></tr>
+      <tr><td><span class="badge b-part">*</span></td><td><code>/api/v1/admin/*</code></td><td>Панель преподавателя: стенды, TTL, настройки, ёмкость, пул, аудит.</td></tr>
+    </table>
+  </section>
+
+  <section id="deploy">
+    <div class="kicker">Этап 5</div>
+    <h2>14 · Развёртывание</h2>
+    <p>Вся инфраструктура поднимается одной командой; конфигурация изолирована в <code>.env</code>.</p>
+<pre><span class="c"># 1. Конфигурация</span>
+cp .env.example .env        <span class="c"># OS_*, DB_*, JWT_SECRET_KEY, LTI_* …</span>
+
+<span class="c"># 2. Запуск всего окружения</span>
+docker compose up -d --build
+
+<span class="c"># 3. Пул из 10 слотов засевается автоматически при первом старте</span>
+<span class="c">#    (app.main.lifespan), миграции схемы применяются идемпотентно.</span></pre>
+    <table>
+      <tr><th>Сервис</th><th>Роль</th></tr>
+      <tr><td><code>backend</code></td><td>FastAPI (REST + LTI + WebSocket-терминал).</td></tr>
+      <tr><td><code>celery_worker</code> / <code>celery_beat</code></td><td>Асинхронные задачи и реконсиляция TTL.</td></tr>
+      <tr><td><code>db</code> / <code>redis</code></td><td>PostgreSQL (состояния/пул/логи) и брокер задач.</td></tr>
+      <tr><td><code>frontend</code></td><td>Собранная React-SPA (nginx-unprivileged).</td></tr>
+      <tr><td><code>nginx-proxy</code></td><td>Единая точка входа :80, проксирование REST/WS.</td></tr>
+    </table>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  <b>КиберШлюз</b> · Шлюз оркестрации лабораторных стендов на платформе «Кибер Инфраструктура»<br>
+  Хакатон · Кейс «Автоматизация работы с лабораторными стендами» · версия 0.5
+</footer>
+
+</body>
+</html>

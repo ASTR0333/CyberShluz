@@ -1,0 +1,34 @@
+title = "Lab orchestrator secrets policy"
+
+
+[extend]
+useDefault = true
+
+
+
+
+[allowlist]
+description = "Hackathon-provided context files (not application secrets)"
+paths = [
+    '''stends_info/''',
+    '''stends_info/.*''',
+    '''gerik_temp/''',
+    '''gerik_temp/.*''',
+    '''backend/test\.db''',
+    '''.*\.gitkeep''',
+
+    '''backend/tests?/.*''',
+]
+
+
+
+regexes = [
+    '''hackhaton_team\d+''',
+]
+
+
+
+
+commits = [
+    "3212a1c41591b06ea16ebbc5c11f5f5e2c943e24",
+]

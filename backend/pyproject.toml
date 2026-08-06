@@ -1,0 +1,26 @@
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+exclude = [
+    "alembic/versions",
+    "tests",
+    "test.db",
+]
+
+[tool.ruff.lint]
+
+
+select = ["E", "F", "W", "B"]
+ignore = [
+    "E501",
+    "E402",
+    "B008",
+    "B904",
+    "W291",
+    "W292",
+    "W293",
+]
+
+[tool.bandit]
+skips = ["B101", "B404", "B603", "B607"]
+exclude_dirs = ["alembic", "tests"]

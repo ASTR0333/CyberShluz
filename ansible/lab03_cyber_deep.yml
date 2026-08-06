@@ -1,0 +1,60 @@
+- name: "Lab 3 deep — глубокая проверка конфигурации"
+  hosts: all
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: false
+
+  tasks:
+
+    - name: "1.1 Установлен пакет acronis-cyber-protect-agent"
+      ansible.builtin.shell: "dpkg -l | grep -E '^ii.*acronis' || rpm -qa | grep -E '^acronis'"
+      register: acronis_pkg
+      changed_when: false
+      failed_when: acronis_pkg.rc != 0
+      tags: [packages]
+
+
+    - name: "2.1 /etc/hosts содержит запись L-MS"
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: 'l-?ms\.cyberprotect\.test'
+        state: present
+      check_mode: true
+      register: hosts_lms
+      failed_when: hosts_lms.changed
+      tags: [config]
+
+    - name: "2.2 SSH ключи студента (authorized_keys) сохранены"
+      ansible.builtin.stat:
+        path: /home/student/.ssh/authorized_keys
+      register: authkeys
+      failed_when: not authkeys.stat.exists or authkeys.stat.size == 0
+      tags: [security]
+
+
+    - name: "3.1 Порт 9877 (Cyber Protect Web-Console) слушает локально"
+      ansible.builtin.shell: "ss -tlnp | grep -E ':9877\\b' || netstat -tlnp 2>/dev/null | grep -E ':9877\\b'"
+      register: port_9877
+      changed_when: false
+      failed_when: port_9877.rc != 0
+      when: "'ms' in (ansible_hostname | default('') | lower) and 'nfs' not in (ansible_hostname | default('') | lower)"
+      tags: [network]
+
+    - name: "3.2 NFS-экспорт BackupL настроен (на L-NFS)"
+      ansible.builtin.shell: "exportfs -v 2>/dev/null"
+      register: nfs_export
+      changed_when: false
+
+      failed_when: nfs_export.rc != 0 or 'Backup' not in (nfs_export.stdout | default(''))
+      when: "'nfs' in (ansible_hostname | default('') | lower)"
+      tags: [network, nfs]
+
+
+    - name: "4.1 В journalctl нет критических ошибок Acronis за последний час"
+      ansible.builtin.shell: "journalctl -u 'acronis*' --since '1 hour ago' --priority=err --no-pager | wc -l"
+      register: acronis_errors
+      changed_when: false
+      failed_when: (acronis_errors.stdout | int) > 0
+      ignore_errors: true
+      tags: [logs]

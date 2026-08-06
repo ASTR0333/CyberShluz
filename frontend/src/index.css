@@ -1,0 +1,18 @@
+@import "tailwindcss";
+@config "../tailwind.config.js";
+
+html, body, #root {
+  font-family: 'Inter', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+}
+
+.brand-wordmark {
+  font-family: 'Inter', system-ui, sans-serif;
+  font-weight: 900;
+  letter-spacing: -0.045em;
+  color: #0b2552;
+  line-height: 0.95;
+}
+

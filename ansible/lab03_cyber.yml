@@ -1,0 +1,69 @@
+- name: "Lab 3 — проверка конфигурации стенда Cyber Protect"
+  hosts: all
+  become: true
+  become_method: sudo
+  gather_facts: true
+  any_errors_fatal: false
+  vars:
+    required_fw_ports:
+      - "7780/tcp"
+      - "9876/tcp"
+      - "9852/tcp"
+      - "9862/tcp"
+
+  tasks:
+    - name: "1.1 Hostname относится к домену cyberprotect.test"
+      ansible.builtin.shell: hostname
+      register: hostname_out
+      changed_when: false
+      failed_when: "'cyberprotect.test' not in (hostname_out.stdout | default(''))"
+      tags: [group:hostname]
+
+    - name: "1.2 На L-NFS открыты firewall-порты Acronis (7780, 9876, 9852, 9862)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        firewall-cmd --list-ports 2>/dev/null || iptables -S 2>/dev/null
+      args:
+        executable: /bin/bash
+      register: fw_ports
+      changed_when: false
+      failed_when: "item.split('/')[0] not in (fw_ports.stdout | default(''))"
+      loop: "{{ required_fw_ports }}"
+      when: "'nfs' in (ansible_hostname | default('') | lower)"
+      tags: [group:firewall]
+
+    - name: "2.1 Модуль ядра snapapi загружен (L-NFS)"
+      ansible.builtin.shell: "lsmod | grep -E '^snapapi'"
+      register: snapapi_mod
+      changed_when: false
+      failed_when: snapapi_mod.rc != 0
+      when: "'nfs' in (ansible_hostname | default('') | lower)"
+      tags: [group:snapapi]
+
+    - name: "3.1 Запущен хотя бы один сервис Acronis (L-NFS)"
+      ansible.builtin.shell: |
+        set -o pipefail
+        systemctl list-units --type=service --state=running --no-legend \
+          | awk '{print $1}' | grep -iE '^acronis' || true
+      args:
+        executable: /bin/bash
+      register: acronis_running
+      changed_when: false
+      failed_when: acronis_running.stdout | trim | length == 0
+      when: "'nfs' in (ansible_hostname | default('') | lower)"
+      tags: [group:acronis]
+
+    - name: "4.1 Порт веб-консоли 9877 слушает (L-MS)"
+      ansible.builtin.wait_for:
+        port: 9877
+        state: started
+        timeout: 5
+      when: "'ms' in (ansible_hostname | default('') | lower) and 'nfs' not in (ansible_hostname | default('') | lower)"
+      tags: [group:web]
+
+    - name: "5.0 Итоговый структурированный отчёт"
+      ansible.builtin.debug:
+        msg:
+          hostname: "{{ hostname_out.stdout | default('?') }}"
+          snapapi_loaded: "{{ (snapapi_mod.rc | default(1)) == 0 }}"
+          acronis_units: "{{ acronis_running.stdout_lines | default([]) }}"
