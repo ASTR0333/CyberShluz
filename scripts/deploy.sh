@@ -4,12 +4,100 @@ set -Eeuo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
+DOCKER_CMD=(docker)
+
 ENV_FILE="${ENV_FILE:-.env}"
 PROJECT_NAME="${COMPOSE_PROJECT_NAME:-}"
 ACTION="up"
 REBUILD=0
 SHOW_LOGS=0
 PULL=0
+
+as_root() {
+    if [[ "${EUID}" -eq 0 ]]; then
+        "$@"
+    elif command -v sudo >/dev/null 2>&1; then
+        sudo "$@"
+    else
+        echo "This operation requires root privileges and sudo is not installed." >&2
+        return 1
+    fi
+}
+
+require_ubuntu_2404() {
+    [[ -r /etc/os-release ]] || {
+        echo "Automatic Docker installation is supported only on Ubuntu Server 24.04." >&2
+        return 1
+    }
+
+    # shellcheck disable=SC1091
+    source /etc/os-release
+    if [[ "${ID:-}" != "ubuntu" || "${VERSION_ID:-}" != "24.04" ]]; then
+        echo "Automatic Docker installation is supported only on Ubuntu Server 24.04; detected ${PRETTY_NAME:-unknown OS}." >&2
+        echo "Install Docker Engine and Docker Compose v2 manually, then run this script again." >&2
+        return 1
+    fi
+}
+
+install_docker() {
+    require_ubuntu_2404
+    echo "Docker is not installed. Installing docker.io and Docker Compose v2 from Ubuntu 24.04 repositories..."
+    as_root apt-get update
+    as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker.io docker-compose-v2
+    as_root systemctl enable --now docker
+}
+
+install_compose_plugin() {
+    require_ubuntu_2404
+    echo "Docker Compose v2 is missing. Installing a package compatible with the existing Docker Engine..."
+    as_root apt-get update
+    if dpkg-query -W -f='${Status}' docker-ce 2>/dev/null | grep -q 'install ok installed'; then
+        as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-plugin
+    else
+        as_root env DEBIAN_FRONTEND=noninteractive apt-get install -y docker-compose-v2
+    fi
+}
+
+prepare_docker() {
+    if ! command -v docker >/dev/null 2>&1; then
+        install_docker
+    fi
+
+    if ! docker compose version >/dev/null 2>&1; then
+        install_compose_plugin
+    fi
+    docker compose version >/dev/null 2>&1 || {
+        echo "Docker Compose v2 installation failed." >&2
+        return 1
+    }
+
+    if docker info >/dev/null 2>&1; then
+        DOCKER_CMD=(docker)
+        return
+    fi
+
+    if ! as_root docker info >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
+        as_root systemctl enable --now docker
+    fi
+
+    if ! as_root docker info >/dev/null 2>&1; then
+        echo "Docker is installed, but the daemon is unavailable." >&2
+        command -v systemctl >/dev/null 2>&1 && as_root systemctl status docker --no-pager || true
+        return 1
+    fi
+
+    if [[ "${EUID}" -eq 0 ]]; then
+        DOCKER_CMD=(docker)
+        return
+    fi
+
+    local deploy_user
+    deploy_user="$(id -un)"
+    as_root usermod -aG docker "${deploy_user}"
+    echo "User ${deploy_user} was added to the docker group. The change becomes permanent after re-login."
+    echo "This deployment will continue through sudo docker."
+    DOCKER_CMD=(sudo docker)
+}
 
 usage() {
     cat <<'EOF'
@@ -38,9 +126,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-command -v docker >/dev/null 2>&1 || { echo "docker is not installed" >&2; exit 1; }
-docker compose version >/dev/null 2>&1 || { echo "Docker Compose v2 is required" >&2; exit 1; }
-docker info >/dev/null 2>&1 || { echo "Docker daemon is unavailable" >&2; exit 1; }
+prepare_docker
 
 [[ -f "${ENV_FILE}" ]] || {
     echo "${ENV_FILE} does not exist. Run ./scripts/configure.sh --env-file ${ENV_FILE}" >&2
@@ -53,7 +139,7 @@ fi
 export APP_ENV_FILE="${ENV_FILE}"
 
 compose() {
-    docker compose --env-file "${ENV_FILE}" --project-name "${PROJECT_NAME}" "$@"
+    "${DOCKER_CMD[@]}" compose --env-file "${ENV_FILE}" --project-name "${PROJECT_NAME}" "$@"
 }
 
 compose config --quiet

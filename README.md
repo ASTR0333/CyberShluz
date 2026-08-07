@@ -8,15 +8,12 @@
 
 ```bash
 chmod +x scripts/configure.sh scripts/deploy.sh
-./scripts/configure.sh
-./scripts/deploy.sh --pull
+./scripts/deploy.sh --configure --pull
 ```
 
-Полная инструкция, обновление, откат, несколько окружений и настройка GitHub Actions описаны в [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+На Ubuntu Server 24.04 скрипт сам устанавливает Docker Engine и Compose v2, запускает демон и выдаёт текущему администратору доступ к Docker-сокету.
 
-Схема двух постоянных ВМ в Кибер Инфраструктуре, установка Moodle 5.2, список новых образов и модель SSH-доступа описаны в [docs/KI_MOODLE_SETUP.md](docs/KI_MOODLE_SETUP.md).
-
-Сверка автоматической проверки с методичкой и найденные опечатки команд собраны в [docs/LAB3_REVIEW.md](docs/LAB3_REVIEW.md).
+Подготовка Кибер Инфраструктуры, две постоянные ВМ, Moodle/LTI, точное заполнение конфигурации, SSH-безопасность, лабораторные образы, CI/CD, проверка и эксплуатация собраны в одном [полном руководстве](docs/GUIDE.md).
 
 ## Проверки разработки
 
