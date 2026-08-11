@@ -361,16 +361,33 @@ export const StandStatus = () => {
           </div>
 
 
-          {status.message && status.status === 'DEPLOYING' && (
-            <div className="mt-4 text-sm text-yellow-700 bg-yellow-50 p-3 rounded-brand border border-yellow-200 flex items-center">
-              <Loader2 className="w-4 h-4 mr-2 animate-spin flex-shrink-0" />
-              {status.message}
+          {status.status === 'DEPLOYING' && (
+            <div className="mt-4 text-sm text-yellow-700 bg-yellow-50 p-3 rounded-brand border border-yellow-200">
+              <div className="flex items-center">
+                <Loader2 className="w-4 h-4 mr-2 animate-spin flex-shrink-0" />
+                <span>{status.message || 'Развёртывание инфраструктуры…'}</span>
+                {status.progress != null && <span className="ml-auto font-mono font-semibold">{status.progress}%</span>}
+              </div>
+              {status.progress != null && (
+                <div className="mt-2 h-1.5 rounded-full bg-yellow-100 overflow-hidden">
+                  <div className="h-full bg-yellow-500 transition-all duration-500" style={{ width: `${Math.max(0, Math.min(100, status.progress))}%` }} />
+                </div>
+              )}
             </div>
           )}
           {status.status === 'PENDING' && (
             <div className="mt-4 text-sm text-gray-600 bg-gray-50 p-3 rounded-brand border border-gray-200 flex items-center">
               <Info className="w-4 h-4 mr-2 flex-shrink-0" />
-              Стенд в очереди на развертывание. Пожалуйста, подождите...
+              {status.message || 'Стенд в очереди на развёртывание. Пожалуйста, подождите…'}
+            </div>
+          )}
+          {status.status === 'FAILED' && (
+            <div className="mt-4 text-sm text-red-700 bg-red-50 p-3 rounded-brand border border-red-200 flex items-start">
+              <Info className="w-4 h-4 mr-2 mt-0.5 flex-shrink-0" />
+              <div>
+                <p className="font-semibold">Развёртывание не завершено</p>
+                <p className="mt-1 break-words">{status.message || 'Неизвестная ошибка OpenStack'}</p>
+              </div>
             </div>
           )}
 

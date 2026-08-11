@@ -44,7 +44,7 @@ def test_student_cannot_allocate_a_second_active_stand(db_session) -> None:
     with pytest.raises(ActiveStandExistsError) as error:
         manager.allocate_stand("student-1", RoleEnum.STUDENT)
     assert error.value.stand_id == first.id
-    assert error.value.stand_status == StandStatusEnum.DEPLOYING.value
+    assert error.value.stand_status == StandStatusEnum.PENDING.value
 
 
 def test_teacher_can_allocate_multiple_stands(db_session) -> None:

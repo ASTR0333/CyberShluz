@@ -74,7 +74,7 @@ class PoolManager:
 
              
             stand.user_id = user.id
-            stand.status = StandStatusEnum.DEPLOYING
+            stand.status = StandStatusEnum.PENDING
             stand.created_at = datetime.now(timezone.utc)
              
              
@@ -82,6 +82,12 @@ class PoolManager:
             stand.expires_at = None
             stand.frozen_until = None
             stand.ip_address = None  
+            stand.vm_details = None
+            stand.network_details = None
+            stand.deployment_progress = 0
+            stand.deployment_message = "Задача ожидает запуска worker..."
+            stand.deployment_error = None
+            stand.deployment_updated_at = datetime.now(timezone.utc)
 
             self.db.commit()
             self.db.refresh(stand)
@@ -133,9 +139,15 @@ class PoolManager:
                 stand.status = StandStatusEnum.FREE
                 stand.user_id = None
                 stand.ip_address = None
-                stand.private_key = None   
-                stand.vm_details = None    
-                stand.lti_context = None   
+                stand.private_key = None
+                stand.student_private_key = None
+                stand.vm_details = None
+                stand.network_details = None
+                stand.deployment_progress = None
+                stand.deployment_message = None
+                stand.deployment_error = None
+                stand.deployment_updated_at = None
+                stand.lti_context = None
                 stand.expires_at = None
                 stand.frozen_until = None
                 self.db.commit()

@@ -45,12 +45,9 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
             return SimpleNamespace(id="server-id")
 
         def get_server(self, _server_id):
-            return SimpleNamespace(id="server-id")
-
-        def wait_for_server(self, _server, status, wait):
-            assert status == "ACTIVE"
-            assert wait == 600
             return SimpleNamespace(
+                id="server-id",
+                status="ACTIVE",
                 addresses={"stand-net": [{"OS-EXT-IPS:type": "fixed", "addr": "10.0.0.10"}]}
             )
 
@@ -91,6 +88,72 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
     assert "block_device_mapping_v2" not in create_server_kwargs
     assert result["L-MS"]["status"] == "ACTIVE"
     assert result["L-MS"]["floating_ip"] == "203.0.113.10"
+
+
+def test_all_servers_share_one_build_deadline(monkeypatch) -> None:
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+
+    class FakeCompute:
+        def find_server(self, _name):
+            return None
+
+        def find_image(self, _name):
+            return SimpleNamespace(id="image-id", min_disk=5)
+
+        def find_flavor(self, _name):
+            return SimpleNamespace(id="flavor-id", disk=20)
+
+        def get_keypair(self, name):
+            return SimpleNamespace(public_key=f"ssh-ed25519 key-for-{name}")
+
+        def create_server(self, name, **_kwargs):
+            return SimpleNamespace(id=name)
+
+        def get_server(self, server_id):
+            return SimpleNamespace(id=server_id, status="BUILD", addresses={})
+
+    class FakeNetwork:
+        def get_network(self, _network_id):
+            return SimpleNamespace(id="network-id")
+
+    connection = SimpleNamespace(compute=FakeCompute(), network=FakeNetwork(), image=None)
+    client = OpenStackClient()
+    monkeypatch.setattr(client, "_connect", lambda: connection)
+    monkeypatch.setattr(
+        client,
+        "_ensure_stand_network",
+        lambda *_args: {"network_id": "network-id", "external_network": "public"},
+    )
+    monkeypatch.setattr(client, "_ensure_security_group", lambda *_args: SimpleNamespace(name="stand1-sg"))
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BUILD_TIMEOUT", 10)
+    monkeypatch.setattr("app.core.openstack_client.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("app.core.openstack_client.time.sleep", clock.sleep)
+
+    payload = default_lab3_config().model_dump()
+    payload["vms"] = payload["vms"][:2]
+    deployment = DeploymentConfig.model_validate(payload)
+
+    result = client.deploy_lab3_stand(
+        "1",
+        "admin-key",
+        "student-key",
+        "admin-private",
+        "student-private",
+        deployment=deployment,
+    )
+
+    assert clock.now == 10
+    assert result["L-MS"]["status"] == "TIMEOUT"
+    assert result["L-NFS"]["status"] == "TIMEOUT"
 
 
 def test_saved_private_key_is_reused_without_rotating_openstack_keypair(monkeypatch) -> None:

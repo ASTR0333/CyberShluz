@@ -57,6 +57,7 @@ export interface VMInfo {
   ip?: string;
   floating_ip?: string;
   status: string;
+  error?: string;
 }
 
 export interface StandStatusResponse {
@@ -66,6 +67,7 @@ export interface StandStatusResponse {
   expires_at: string | null;
   frozen_until: string | null;
   message?: string;
+  progress?: number | null;
   vms?: Record<string, VMInfo>;
   network?: {
     cidr?: string;

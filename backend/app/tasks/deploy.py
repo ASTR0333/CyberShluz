@@ -1,13 +1,58 @@
 import json
+import logging
 from app.celery_app import celery_app
 from datetime import datetime, timedelta, timezone
 from app.core.openstack_client import (
     CapacityExceededException,
     OpenStackClient,
     SSHBootstrapError,
+    VMProvisioningError,
 )
 from app.core.config import settings
 from app.core.topology import DeploymentConfig, default_lab3_config
+
+
+logger = logging.getLogger(__name__)
+
+
+def _persist_deployment_state(
+    stand_id: str,
+    *,
+    progress: int | None = None,
+    message: str | None = None,
+    error: str | None = None,
+    status=None,
+) -> None:
+    """Keep user-visible task state durable even when Redis is unavailable."""
+    from app.core.database import SessionLocal
+    from app.core.models import Stand
+
+    try:
+        with SessionLocal() as db:
+            stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
+            if not stand:
+                return
+            if progress is not None:
+                stand.deployment_progress = max(0, min(100, int(progress)))
+            if message is not None:
+                stand.deployment_message = message
+            stand.deployment_error = error
+            stand.deployment_updated_at = datetime.now(timezone.utc)
+            if status is not None:
+                stand.status = status
+            db.commit()
+    except Exception:
+        # Losing status persistence must be visible in worker logs, but it must
+        # not abandon resources that OpenStack is already creating.
+        logger.exception("Failed to persist deployment state for stand %s", stand_id)
+
+
+def _update_task_state_safely(task, *, state: str, meta: dict) -> None:
+    """A result-backend outage must not abort the actual OpenStack operation."""
+    try:
+        task.update_state(state=state, meta=meta)
+    except Exception as exc:
+        logger.warning("Celery result backend is unavailable while publishing %s: %s", state, exc)
 
 
 @celery_app.task(bind=True, max_retries=2)
@@ -33,10 +78,23 @@ def deploy_stand_task(
             saved_admin_key = stand.private_key
             saved_student_key = stand.student_private_key
             stand.status = StandStatusEnum.DEPLOYING
+            stand.deployment_progress = 1
+            stand.deployment_message = "Worker запущен. Подготовка развёртывания..."
+            stand.deployment_error = None
+            stand.deployment_updated_at = datetime.now(timezone.utc)
             db.commit()
 
+    last_progress = 1
+
     def progress_cb(pct, msg):
-        self.update_state(state="DEPLOYING", meta={"progress": pct, "message": msg})
+        nonlocal last_progress
+        last_progress = int(pct)
+        _persist_deployment_state(stand_id, progress=last_progress, message=msg)
+        _update_task_state_safely(
+            self,
+            state="DEPLOYING",
+            meta={"progress": last_progress, "message": msg},
+        )
 
     try:
         progress_cb(5, "Подключение к Кибер Инфраструктуре...")
@@ -119,7 +177,11 @@ def deploy_stand_task(
         total_count = len(vm_results)
         if active_count != total_count:
             failed_roles = [role for role, vm in vm_results.items() if vm.get("status") != "ACTIVE"]
-            raise RuntimeError("Не все ВМ перешли в ACTIVE: " + ", ".join(failed_roles))
+            details = ", ".join(
+                f"{failed_role}={vm_results[failed_role].get('status', 'UNKNOWN')}"
+                for failed_role in failed_roles
+            )
+            raise VMProvisioningError("Не все ВМ перешли в ACTIVE: " + details)
         ssh_bootstrapped = vm_results.get("L-MS", {}).get("ssh_bootstrapped", True)
 
         with SessionLocal() as db:
@@ -129,6 +191,9 @@ def deploy_stand_task(
                 stand.private_key = private_key
                 stand.student_private_key = student_private_key
                 stand.status = StandStatusEnum.READY
+                stand.deployment_progress = 100
+                stand.deployment_error = None
+                stand.deployment_updated_at = datetime.now(timezone.utc)
                 stand.vm_details = json.dumps(vm_results, default=str)
                 if net_details:
                     stand.network_details = json.dumps(net_details, default=str)
@@ -147,25 +212,45 @@ def deploy_stand_task(
             "vms": vm_results,
         }
 
-    except SSHBootstrapError as exc:
-        print(f"[WORKER] Secure SSH bootstrap failed: {exc}")
+    except (SSHBootstrapError, VMProvisioningError) as exc:
+        print(f"[WORKER] Deployment cannot continue: {exc}")
         # The bootstrap function already waits for the VM to become reachable.
         # Replaying the entire OpenStack deployment cannot repair invalid image
         # credentials and used to rotate keys for already-created instances.
-        self.update_state(state="FAILURE", meta={"error": str(exc)})
+        _persist_deployment_state(
+            stand_id,
+            progress=last_progress,
+            message="Развёртывание завершилось ошибкой",
+            error=str(exc),
+        )
+        _update_task_state_safely(self, state="FAILURE", meta={"error": str(exc)})
         raise
 
     except CapacityExceededException as ce:
         if self.request.retries < self.max_retries:
+            progress_cb(last_progress, "OpenStack временно недоступен. Повтор через 180 секунд...")
             raise self.retry(exc=ce, countdown=180)
-        self.update_state(state="FAILURE", meta={"error": str(ce)})
+        _persist_deployment_state(
+            stand_id,
+            progress=last_progress,
+            message="Развёртывание завершилось ошибкой",
+            error=str(ce),
+        )
+        _update_task_state_safely(self, state="FAILURE", meta={"error": str(ce)})
         raise
 
     except Exception as exc:
         print(f"[WORKER] Deploy failed: {exc}")
         if self.request.retries < self.max_retries:
+            progress_cb(last_progress, "Временная ошибка OpenStack. Повтор через 60 секунд...")
             raise self.retry(exc=exc, countdown=60)
-        self.update_state(state="FAILURE", meta={"error": str(exc)})
+        _persist_deployment_state(
+            stand_id,
+            progress=last_progress,
+            message="Развёртывание завершилось ошибкой",
+            error=str(exc),
+        )
+        _update_task_state_safely(self, state="FAILURE", meta={"error": str(exc)})
         raise
 
 
@@ -190,7 +275,11 @@ def freeze_stand_task(self, stand_id: str, reason: str):
 @celery_app.task(bind=True, max_retries=3)
 def cleanup_stand_task(self, stand_id: str):
     print(f"[WORKER] Cleaning stand_id={stand_id}")
-    self.update_state(state="CLEANING", meta={"progress": 10, "message": "Удаление ВМ из кластера..."})
+    _update_task_state_safely(
+        self,
+        state="CLEANING",
+        meta={"progress": 10, "message": "Удаление ВМ из кластера..."},
+    )
 
     try:
         from app.core.database import SessionLocal
@@ -209,7 +298,11 @@ def cleanup_stand_task(self, stand_id: str):
         print(f"[WORKER] OpenStack cleanup failed: {e}")
         raise self.retry(exc=e, countdown=60)
 
-    self.update_state(state="CLEANING", meta={"progress": 90, "message": "Освобождение стенда..."})
+    _update_task_state_safely(
+        self,
+        state="CLEANING",
+        meta={"progress": 90, "message": "Освобождение стенда..."},
+    )
 
     from app.core.database import SessionLocal
     from app.core.models import Stand, StandStatusEnum
@@ -224,6 +317,10 @@ def cleanup_stand_task(self, stand_id: str):
             stand.student_private_key = None
             stand.vm_details = None
             stand.network_details = None
+            stand.deployment_progress = None
+            stand.deployment_message = None
+            stand.deployment_error = None
+            stand.deployment_updated_at = None
             stand.last_check_result = None
             stand.lti_context = None
             stand.expires_at = None

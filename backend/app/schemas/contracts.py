@@ -34,6 +34,7 @@ class StatusResponse(BaseModel):
     expires_at: Optional[datetime] = None
     frozen_until: Optional[datetime] = None
     message: Optional[str] = ""
+    progress: Optional[int] = None
     vms: Optional[dict] = None
     network: Optional[dict] = None
 

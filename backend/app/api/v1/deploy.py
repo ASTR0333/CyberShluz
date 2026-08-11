@@ -2,6 +2,7 @@
 import logging
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
+from app.celery_app import celery_app
 from app.schemas.contracts import DeployRequest, DeploymentOptionsResponse, DeployResponse
 from app.tasks.deploy import deploy_stand_task
 from app.core.pool_manager import ActiveStandExistsError, PoolManager
@@ -161,6 +162,12 @@ async def deploy(
 
      
     try:
+        # Stand ids are reused from the pool. Remove a previous deployment's
+        # result so it cannot briefly appear as the new task's status.
+        try:
+            celery_app.backend.forget(stand_id_str)
+        except Exception as exc:
+            logger.warning("Could not forget stale task result for stand %s: %s", stand_id_str, exc)
         deploy_stand_task.apply_async(
             args=[
                 stand_id_str,
@@ -176,6 +183,10 @@ async def deploy(
         logger.exception("Failed to enqueue deployment for stand %s", stand_id_str)
         stand.status = StandStatusEnum.FREE
         stand.user_id = None
+        stand.deployment_progress = None
+        stand.deployment_message = None
+        stand.deployment_error = None
+        stand.deployment_updated_at = None
         db.commit()
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -185,6 +196,6 @@ async def deploy(
     return DeployResponse(
         stand_id=stand_id_str,
         project_id=f"project_{stand.id}",
-        status="DEPLOYING",
-        message="Проект успешно зарезервирован СУБД. Запущен процесс развертывания инфраструктуры в OpenStack."
+        status="PENDING",
+        message="Проект зарезервирован. Задача поставлена в очередь развёртывания."
     )

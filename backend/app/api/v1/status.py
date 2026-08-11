@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, HTTPException, Depends
 from sqlalchemy.orm import Session
 from app.celery_app import celery_app
@@ -7,6 +8,7 @@ from app.schemas.contracts import StandSummaryResponse, StatusResponse
 from app.core.database import get_db
 from app.core.models import Stand, StandStatusEnum
 from app.core.security import assert_stand_owner_or_teacher, require_student
+from app.core.config import settings
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -84,13 +86,35 @@ async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(
         logger.warning("Celery status is unavailable for stand %s: %s", actual_stand_id, exc)
     meta = result_info if isinstance(result_info, dict) else {}
 
-    if result_state == "FAILURE" and stand.status.value in ("PENDING", "DEPLOYING"):
-        failure_message = meta.get("error") or str(result_info or "Ошибка развертывания")
+    persisted_error = getattr(stand, "deployment_error", None)
+    deployment_updated_at = getattr(stand, "deployment_updated_at", None)
+    has_persisted_progress = deployment_updated_at is not None
+    backend_failure = result_state == "FAILURE" and not has_persisted_progress
+    if (backend_failure or persisted_error) and stand.status.value in ("PENDING", "DEPLOYING"):
+        failure_message = persisted_error or meta.get("error") or str(result_info or "Ошибка развертывания")
         return StatusResponse(
             stand_id=actual_stand_id,
             status="FAILED",
             message=failure_message,
+            progress=getattr(stand, "deployment_progress", None),
         )
+
+    if stand.status.value == "DEPLOYING":
+        last_update = deployment_updated_at or stand.created_at
+        if last_update is not None:
+            if last_update.tzinfo is None:
+                last_update = last_update.replace(tzinfo=timezone.utc)
+            stale_after = timedelta(seconds=max(1, settings.DEPLOYMENT_STALE_TIMEOUT))
+            if datetime.now(timezone.utc) - last_update > stale_after:
+                return StatusResponse(
+                    stand_id=actual_stand_id,
+                    status="FAILED",
+                    message=(
+                        "Worker давно не обновлял статус развёртывания. "
+                        "Завершите стенд и запустите его повторно."
+                    ),
+                    progress=getattr(stand, "deployment_progress", None),
+                )
 
     vms = None
     network = None
@@ -111,7 +135,12 @@ async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(
         ip_address=stand.ip_address,
         expires_at=stand.expires_at,
         frozen_until=stand.frozen_until,
-        message=meta.get("message", ""),
+        message=getattr(stand, "deployment_message", None) or meta.get("message") or "",
+        progress=(
+            getattr(stand, "deployment_progress", None)
+            if getattr(stand, "deployment_progress", None) is not None
+            else meta.get("progress")
+        ),
         vms=vms,
         network=network,
     )

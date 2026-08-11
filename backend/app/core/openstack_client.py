@@ -24,6 +24,10 @@ class SSHBootstrapError(RuntimeError):
     """The access VM could not be hardened and verified safely."""
 
 
+class VMProvisioningError(RuntimeError):
+    """Nova could not bring every requested VM to ACTIVE within the deadline."""
+
+
 class OpenStackClient:
     def __init__(self, project_ref: str | None = None):
         self._conn = None
@@ -434,27 +438,62 @@ class OpenStackClient:
             if resource_cb:
                 resource_cb(results, net_info)
 
-        for vm_role, info in results.items():
-            if info.get("status") == "ACTIVE":
-                continue
-            try:
-                server_obj = conn.compute.get_server(info["server_id"])
-                server = conn.compute.wait_for_server(server_obj, status="ACTIVE", wait=600)
-                actual_ip = topology[vm_role]["ip"]
-                if server.addresses:
-                    for net_addrs in server.addresses.values():
-                        for addr in net_addrs:
-                            if addr.get("OS-EXT-IPS:type") == "fixed":
-                                actual_ip = addr["addr"]
-                                break
-                info["ip"] = actual_ip
-                info["status"] = "ACTIVE"
-            except Exception as e:
-                print(f"[OpenStack] Wait for {vm_role} failed: {e}")
-                info["ip"] = info["expected_ip"]
-                info["status"] = "ERROR"
+        # All instances are created before this point, so wait for them under
+        # one shared deadline. Waiting up to 600 seconds for each VM in series
+        # used to turn one stuck BUILD into a deployment lasting tens of minutes.
+        build_timeout = max(1, int(settings.VM_BUILD_TIMEOUT))
+        started = time.monotonic()
+        deadline = started + build_timeout
+        pending = {role for role, info in results.items() if info.get("status") != "ACTIVE"}
+        last_errors: dict[str, str] = {}
+
+        while pending and time.monotonic() < deadline:
+            for vm_role in list(pending):
+                info = results[vm_role]
+                try:
+                    server = conn.compute.get_server(info["server_id"])
+                    server_status = str(getattr(server, "status", "BUILD") or "BUILD").upper()
+                    info["status"] = server_status
+                    if server_status == "ACTIVE":
+                        actual_ip = topology[vm_role]["ip"]
+                        for net_addrs in (getattr(server, "addresses", None) or {}).values():
+                            for addr in net_addrs:
+                                if addr.get("OS-EXT-IPS:type") == "fixed":
+                                    actual_ip = addr["addr"]
+                                    break
+                        info["ip"] = actual_ip
+                        pending.remove(vm_role)
+                    elif server_status == "ERROR":
+                        fault = getattr(server, "fault", None)
+                        if fault:
+                            info["error"] = str(fault)
+                        info["ip"] = info["expected_ip"]
+                        pending.remove(vm_role)
+                except Exception as exc:
+                    # A transient Nova read error is retried within the same
+                    # deadline instead of incorrectly marking the VM failed.
+                    last_errors[vm_role] = str(exc)
+
             if resource_cb:
                 resource_cb(results, net_info)
+            if progress_cb:
+                active = sum(1 for info in results.values() if info.get("status") == "ACTIVE")
+                elapsed = min(build_timeout, int(time.monotonic() - started))
+                progress_cb(
+                    int(90 + 4 * active / max(1, total)),
+                    f"Ожидание ВМ: {active}/{total} ACTIVE ({elapsed}/{build_timeout} с)...",
+                )
+            if pending:
+                time.sleep(min(5, max(0, deadline - time.monotonic())))
+
+        for vm_role in pending:
+            info = results[vm_role]
+            info["ip"] = info["expected_ip"]
+            info["status"] = "TIMEOUT"
+            if vm_role in last_errors:
+                info["error"] = last_errors[vm_role]
+        if pending and resource_cb:
+            resource_cb(results, net_info)
 
          
          

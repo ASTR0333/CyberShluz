@@ -54,6 +54,22 @@ async def lifespan(app: FastAPI):
                 conn.execute(text("ALTER TABLE stands ADD COLUMN network_details TEXT"))
                 conn.commit()
                 print(" [DB] Добавлена колонка network_details", flush=True)
+            if "deployment_progress" not in columns:
+                conn.execute(text("ALTER TABLE stands ADD COLUMN deployment_progress INTEGER"))
+                conn.commit()
+                print(" [DB] Добавлена колонка deployment_progress", flush=True)
+            if "deployment_message" not in columns:
+                conn.execute(text("ALTER TABLE stands ADD COLUMN deployment_message TEXT"))
+                conn.commit()
+                print(" [DB] Добавлена колонка deployment_message", flush=True)
+            if "deployment_error" not in columns:
+                conn.execute(text("ALTER TABLE stands ADD COLUMN deployment_error TEXT"))
+                conn.commit()
+                print(" [DB] Добавлена колонка deployment_error", flush=True)
+            if "deployment_updated_at" not in columns:
+                conn.execute(text("ALTER TABLE stands ADD COLUMN deployment_updated_at TIMESTAMP"))
+                conn.commit()
+                print(" [DB] Добавлена колонка deployment_updated_at", flush=True)
 
              
              

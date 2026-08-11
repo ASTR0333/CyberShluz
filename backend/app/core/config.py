@@ -41,7 +41,9 @@ class Settings(BaseSettings):
     # before a stand is marked READY.
     VM_BOOTSTRAP_USER: str = ""
     VM_BOOTSTRAP_PASSWORD: str = ""
+    VM_BUILD_TIMEOUT: int = 600
     SSH_BOOTSTRAP_TIMEOUT: int = 240
+    DEPLOYMENT_STALE_TIMEOUT: int = 1200
 
      
     JWT_SECRET_KEY: str = "change-me-in-env"

@@ -60,6 +60,10 @@ class Stand(Base):
     student_private_key = Column(String, nullable=True)
     vm_details = Column(Text, nullable=True)
     network_details = Column(Text, nullable=True)  
+    deployment_progress = Column(Integer, nullable=True)
+    deployment_message = Column(Text, nullable=True)
+    deployment_error = Column(Text, nullable=True)
+    deployment_updated_at = Column(DateTime, nullable=True)
     last_check_result = Column(Text, nullable=True)  
     lti_context = Column(Text, nullable=True)  
 
