@@ -1,4 +1,5 @@
 import sys
+import subprocess
 from types import SimpleNamespace
 
 
@@ -41,3 +42,26 @@ def test_windows_cloudbase_init_uses_keys_and_standard_student() -> None:
     assert "PasswordAuthentication' = 'no'" in user_data
     assert ADMIN_KEY in user_data
     assert STUDENT_KEY in user_data
+
+
+def test_legacy_bootstrap_creates_separate_users_and_disables_passwords() -> None:
+    script = OpenStackClient._legacy_bootstrap_script()
+
+    assert 'ensure_user "$admin_user"' in script
+    assert 'ensure_user "$student_user"' in script
+    assert 'install_key "$admin_user" "$admin_key"' in script
+    assert 'install_key "$student_user" "$student_key"' in script
+    assert "NOPASSWD:ALL" in script
+    assert 'gpasswd -d "$student_user" sudo' in script
+    assert "PasswordAuthentication no" in script
+    assert "PermitRootLogin no" in script
+    assert "sshd -t" in script
+
+    syntax_check = subprocess.run(
+        ["bash", "-n"],
+        input=script,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    assert syntax_check.returncode == 0, syntax_check.stderr

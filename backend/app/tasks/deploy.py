@@ -1,7 +1,11 @@
 import json
 from app.celery_app import celery_app
 from datetime import datetime, timedelta, timezone
-from app.core.openstack_client import OpenStackClient, CapacityExceededException
+from app.core.openstack_client import (
+    CapacityExceededException,
+    OpenStackClient,
+    SSHBootstrapError,
+)
 from app.core.config import settings
 from app.core.topology import DeploymentConfig, default_lab3_config
 
@@ -21,9 +25,13 @@ def deploy_stand_task(
 
     print(f"[WORKER] Starting deployment for stand_id={stand_id}, user={user_id}, lab={lab_id}")
 
+    saved_admin_key = None
+    saved_student_key = None
     with SessionLocal() as db:
         stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
         if stand:
+            saved_admin_key = stand.private_key
+            saved_student_key = stand.student_private_key
             stand.status = StandStatusEnum.DEPLOYING
             db.commit()
 
@@ -42,8 +50,27 @@ def deploy_stand_task(
         admin_key_name = f"key-stand{stand_id}-admin"
         student_key_name = f"key-stand{stand_id}-student"
         progress_cb(10, "Генерация SSH-ключей администратора и студента...")
-        private_key = os_client.create_keypair(admin_key_name)
-        student_private_key = os_client.create_keypair(student_key_name)
+        private_key = os_client.create_keypair(
+            admin_key_name,
+            private_key=saved_admin_key,
+        )
+        # Persist each private key before any VM is created. A Celery retry must
+        # reconcile the OpenStack keypair with this key instead of rotating it.
+        with SessionLocal() as key_db:
+            key_stand = key_db.query(Stand).filter(Stand.id == int(stand_id)).first()
+            if key_stand:
+                key_stand.private_key = private_key
+                key_db.commit()
+
+        student_private_key = os_client.create_keypair(
+            student_key_name,
+            private_key=saved_student_key,
+        )
+        with SessionLocal() as key_db:
+            key_stand = key_db.query(Stand).filter(Stand.id == int(stand_id)).first()
+            if key_stand:
+                key_stand.student_private_key = student_private_key
+                key_db.commit()
 
         progress_cb(20, "Проверка ёмкости кластера...")
         required_vcpus = os_client.required_vcpus(deployment)
@@ -119,6 +146,14 @@ def deploy_stand_task(
             "status": "READY",
             "vms": vm_results,
         }
+
+    except SSHBootstrapError as exc:
+        print(f"[WORKER] Secure SSH bootstrap failed: {exc}")
+        # The bootstrap function already waits for the VM to become reachable.
+        # Replaying the entire OpenStack deployment cannot repair invalid image
+        # credentials and used to rotate keys for already-created instances.
+        self.update_state(state="FAILURE", meta={"error": str(exc)})
+        raise
 
     except CapacityExceededException as ce:
         if self.request.retries < self.max_retries:

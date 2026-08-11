@@ -219,6 +219,9 @@ export OS_REGION_NAME=RegionOne
 | Default external network | `public` | имя внешней сети КИ; не `local` |
 | Administrative VM user | `labadmin` | создаётся cloud-init лабораторных ВМ |
 | Unprivileged VM user | `student` | создаётся cloud-init лабораторных ВМ |
+| Legacy image initial SSH user | заводской пользователь L-MS либо пусто | нужен только образам без cloud-init |
+| Legacy image initial SSH password | заводской пароль L-MS либо пусто | хранится только в `.env`, после bootstrap вход по паролю отключается |
+| SSH bootstrap timeout | `240` | максимальное ожидание доступности legacy L-MS |
 | Stand TTL in hours | `2` | срок обычного стенда |
 | Freeze duration in hours | `24` | срок заморозки стенда |
 | Maximum projected utilization | `0.9` | предел 90% квоты |
@@ -416,7 +419,17 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 - security group публикует SSH только через предусмотренную точку входа;
 - PostgreSQL, NFS и RDP не публикуются напрямую в Интернет.
 
-Если cloud-init/OpenSSH на L-MS не применил ключевую политику, развёртывание завершается ошибкой, чтобы не оставить небезопасный стенд.
+Для legacy-образа L-MS без cloud-init задайте `VM_BOOTSTRAP_USER` и
+`VM_BOOTSTRAP_PASSWORD` в серверном `.env`. CyberShluz однократно входит под
+заводской учётной записью, создаёт `labadmin` и `student`, устанавливает разные
+ключи, удаляет административные права у студента и отключает парольный SSH.
+Пароль не сохраняется в БД стенда и не возвращается через API.
+
+Перед статусом `READY` шлюз обязательно подключается обоими ключами, проверяет
+`sudo` у администратора и отсутствие `sudo` у студента. Если ни cloud-init, ни
+одноразовый bootstrap не обеспечили эту политику, развёртывание завершается
+ошибкой. Сохранённые ключи повторно используются при Celery retry и не меняются
+у уже созданных ВМ.
 
 ## 11. Проверка лабораторной №3
 

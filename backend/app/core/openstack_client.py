@@ -1,6 +1,9 @@
  
+import base64
 import io
 import os
+import re
+import shlex
 import time
 
 import openstack
@@ -15,6 +18,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 class CapacityExceededException(Exception):
     pass
+
+
+class SSHBootstrapError(RuntimeError):
+    """The access VM could not be hardened and verified safely."""
 
 
 class OpenStackClient:
@@ -127,31 +134,40 @@ class OpenStackClient:
      
      
      
-    def create_keypair(self, name: str, key_type: str = "ed25519") -> str:
-        private_pem, public_openssh = self._generate_local_keypair(key_type)
+    def create_keypair(
+        self,
+        name: str,
+        key_type: str = "ed25519",
+        private_key: str | None = None,
+    ) -> str:
+        """Create or reconcile a keypair without rotating keys on task retries."""
+        generated = private_key is None
+        if generated:
+            private_pem, public_openssh = self._generate_local_keypair(key_type)
+        else:
+            private_pem = private_key
+            public_openssh = self._public_key_from_private(private_pem)
         conn = self._connect()
 
-         
-         
-         
         existing = conn.compute.find_keypair(name)
-        if existing:
+        existing_public = getattr(existing, "public_key", "") if existing else ""
+        if existing and self._key_identity(existing_public) != self._key_identity(public_openssh):
             try:
                 conn.compute.delete_keypair(existing)
             except Exception as e:
                 raise RuntimeError(f"Cannot replace OpenStack keypair '{name}': {e}") from e
+            existing = None
 
-        try:
-            conn.compute.create_keypair(name=name, public_key=public_openssh)
-        except Exception as e:
-             
-             
-            if key_type != "rsa":
-                print(f"[OpenStack] upload ed25519 keypair failed ({e}), fallback to RSA")
-                private_pem, public_openssh = self._generate_local_keypair("rsa")
+        if not existing:
+            try:
                 conn.compute.create_keypair(name=name, public_key=public_openssh)
-            else:
-                raise
+            except Exception as e:
+                if generated and key_type != "rsa":
+                    print(f"[OpenStack] upload ed25519 keypair failed ({e}), fallback to RSA")
+                    private_pem, public_openssh = self._generate_local_keypair("rsa")
+                    conn.compute.create_keypair(name=name, public_key=public_openssh)
+                else:
+                    raise
 
          
         key_dir = "/app/ssh_keys"
@@ -166,6 +182,19 @@ class OpenStackClient:
             print(f"[OpenStack] Warning: Failed to write ssh key to disk: {e}")
 
         return private_pem
+
+    @staticmethod
+    def _key_identity(public_key: str) -> str:
+        """Compare OpenSSH keys without depending on an optional comment."""
+        return " ".join(public_key.strip().split()[:2])
+
+    @staticmethod
+    def _public_key_from_private(private_key: str) -> str:
+        key = serialization.load_ssh_private_key(private_key.encode("utf-8"), password=None)
+        return key.public_key().public_bytes(
+            encoding=serialization.Encoding.OpenSSH,
+            format=serialization.PublicFormat.OpenSSH,
+        ).decode("utf-8")
 
     @staticmethod
     def _generate_local_keypair(key_type: str = "ed25519") -> tuple[str, str]:
@@ -458,7 +487,7 @@ class OpenStackClient:
                 if progress_cb:
                     progress_cb(97, f"Настройка SSH-доступа на {vm_role}...")
                 try:
-                    self._verify_lms_access(
+                    self._prepare_lms_access(
                         vm_info["floating_ip"],
                         admin_private_key,
                         student_private_key,
@@ -466,9 +495,9 @@ class OpenStackClient:
                     vm_info["ssh_bootstrapped"] = True
                 except Exception as e:
                     print(f"[OpenStack] SSH bootstrap failed for {vm_role}: {e}")
-                    raise RuntimeError(
-                        "L-MS did not pass key-only SSH verification; "
-                        "the image must contain cloud-init and OpenSSH"
+                    raise SSHBootstrapError(
+                        "L-MS did not pass secure SSH bootstrap and key verification: "
+                        f"{e}"
                     ) from e
 
          
@@ -603,6 +632,227 @@ Restart-Service sshd
                 continue
         raise ValueError("Unsupported SSH private key format")
 
+    def _prepare_lms_access(
+        self,
+        ip: str,
+        admin_private_key: str,
+        student_private_key: str,
+    ) -> None:
+        """Use cloud-init keys when available, otherwise harden a legacy image."""
+        timeout = max(1, int(settings.SSH_BOOTSTRAP_TIMEOUT))
+        bootstrap_user = settings.VM_BOOTSTRAP_USER.strip()
+        bootstrap_password = settings.VM_BOOTSTRAP_PASSWORD
+
+        if bool(bootstrap_user) != bool(bootstrap_password):
+            raise SSHBootstrapError(
+                "VM_BOOTSTRAP_USER and VM_BOOTSTRAP_PASSWORD must either both be set or both be empty"
+            )
+
+        if bootstrap_user:
+            # A short probe keeps cloud-init images on the passwordless path.
+            try:
+                self._verify_lms_access(
+                    ip,
+                    admin_private_key,
+                    student_private_key,
+                    max_wait=min(15, timeout),
+                )
+                return
+            except Exception as key_error:
+                print(f"[OpenStack] Initial key-only SSH probe failed: {key_error}")
+
+            self._bootstrap_legacy_lms_access(
+                ip,
+                admin_private_key,
+                student_private_key,
+                max_wait=timeout,
+            )
+
+            try:
+                self._verify_lms_access(
+                    ip,
+                    admin_private_key,
+                    student_private_key,
+                    max_wait=min(60, timeout),
+                )
+                return
+            except Exception as exc:
+                raise SSHBootstrapError(f"post-bootstrap key verification failed: {exc}") from exc
+
+        try:
+            self._verify_lms_access(
+                ip,
+                admin_private_key,
+                student_private_key,
+                max_wait=timeout,
+            )
+        except Exception as exc:
+            raise SSHBootstrapError(
+                "key-only SSH failed and legacy password bootstrap is not configured: "
+                f"{exc}"
+            ) from exc
+
+    def _bootstrap_legacy_lms_access(
+        self,
+        ip: str,
+        admin_private_key: str,
+        student_private_key: str,
+        max_wait: int,
+    ) -> None:
+        """Enter once with the image password, install keys, then disable passwords."""
+        import paramiko
+        import socket
+
+        bootstrap_user = settings.VM_BOOTSTRAP_USER.strip()
+        bootstrap_password = settings.VM_BOOTSTRAP_PASSWORD
+        admin_user = settings.VM_ADMIN_USER.strip()
+        student_user = settings.VM_STUDENT_USER.strip()
+        for username in (bootstrap_user, admin_user, student_user):
+            if not re.fullmatch(r"[a-z_][a-z0-9_-]{0,31}", username):
+                raise SSHBootstrapError(f"unsafe Linux username in SSH bootstrap configuration: {username!r}")
+        if admin_user == student_user:
+            raise SSHBootstrapError("VM_ADMIN_USER and VM_STUDENT_USER must be different")
+
+        admin_public = self._public_key_from_private(admin_private_key)
+        student_public = self._public_key_from_private(student_private_key)
+        admin_key_b64 = base64.b64encode(admin_public.encode("utf-8")).decode("ascii")
+        student_key_b64 = base64.b64encode(student_public.encode("utf-8")).decode("ascii")
+
+        deadline = time.time() + max_wait
+        last_error: Exception | None = None
+        client = None
+        while time.time() < deadline:
+            candidate = paramiko.SSHClient()
+            candidate.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            try:
+                candidate.connect(
+                    hostname=ip,
+                    username=bootstrap_user,
+                    password=bootstrap_password,
+                    timeout=10,
+                    banner_timeout=15,
+                    auth_timeout=15,
+                    look_for_keys=False,
+                    allow_agent=False,
+                )
+                client = candidate
+                break
+            except paramiko.AuthenticationException as exc:
+                candidate.close()
+                raise SSHBootstrapError(
+                    f"legacy bootstrap credentials were rejected for {bootstrap_user}@{ip}"
+                ) from exc
+            except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as exc:
+                last_error = exc
+                candidate.close()
+                time.sleep(5)
+
+        if client is None:
+            raise SSHBootstrapError(
+                f"legacy password SSH to {bootstrap_user}@{ip} was unavailable for {max_wait}s: {last_error}"
+            )
+
+        command = "sudo -S -p '' bash -s -- {} {} {} {}".format(
+            shlex.quote(admin_user),
+            shlex.quote(student_user),
+            shlex.quote(admin_key_b64),
+            shlex.quote(student_key_b64),
+        )
+        try:
+            stdin, stdout, stderr = client.exec_command(command, timeout=90)
+            stdin.write(bootstrap_password + "\n")
+            stdin.write(self._legacy_bootstrap_script())
+            stdin.channel.shutdown_write()
+            rc = stdout.channel.recv_exit_status()
+            output = stdout.read().decode(errors="ignore")[-500:]
+            error = stderr.read().decode(errors="ignore")[-1000:]
+            if rc != 0:
+                raise SSHBootstrapError(
+                    f"legacy SSH hardening failed with exit code {rc}: {error or output or 'no output'}"
+                )
+        finally:
+            client.close()
+
+        print(f"[OpenStack] Legacy L-MS @ {ip} hardened; password SSH disabled")
+
+    @staticmethod
+    def _legacy_bootstrap_script() -> str:
+        return r'''set -Eeuo pipefail
+admin_user="$1"
+student_user="$2"
+admin_key="$(printf '%s' "$3" | base64 -d)"
+student_key="$(printf '%s' "$4" | base64 -d)"
+
+ensure_user() {
+  local username="$1"
+  if id "$username" >/dev/null 2>&1; then
+    usermod -s /bin/bash "$username"
+  else
+    useradd --create-home --shell /bin/bash "$username"
+  fi
+}
+
+install_key() {
+  local username="$1" public_key="$2" user_home
+  user_home="$(getent passwd "$username" | cut -d: -f6)"
+  test -n "$user_home"
+  install -d -m 0700 -o "$username" -g "$username" "$user_home/.ssh"
+  printf '%s\n' "$public_key" > "$user_home/.ssh/authorized_keys"
+  chown "$username:$username" "$user_home/.ssh/authorized_keys"
+  chmod 0600 "$user_home/.ssh/authorized_keys"
+}
+
+ensure_user "$admin_user"
+ensure_user "$student_user"
+install_key "$admin_user" "$admin_key"
+install_key "$student_user" "$student_key"
+
+printf '%s ALL=(ALL) NOPASSWD:ALL\n' "$admin_user" > "/etc/sudoers.d/90-kibershluz-admin"
+chmod 0440 "/etc/sudoers.d/90-kibershluz-admin"
+command -v visudo >/dev/null 2>&1 && visudo -cf "/etc/sudoers.d/90-kibershluz-admin"
+
+rm -f "/etc/sudoers.d/90-${student_user}-nopasswd" "/etc/sudoers.d/90-${student_user}"
+gpasswd -d "$student_user" sudo >/dev/null 2>&1 || true
+gpasswd -d "$student_user" wheel >/dev/null 2>&1 || true
+sed -ri "/^[[:space:]]*${student_user}[[:space:]]+ALL[[:space:]]*=.*$/d" /etc/sudoers
+
+passwd -l root >/dev/null 2>&1 || true
+passwd -l "$admin_user" >/dev/null 2>&1 || true
+passwd -l "$student_user" >/dev/null 2>&1 || true
+
+set_sshd_option() {
+  local option="$1" value="$2"
+  if grep -qiE "^[[:space:]]*#?[[:space:]]*${option}[[:space:]]+" /etc/ssh/sshd_config; then
+    sed -ri "s|^[[:space:]]*#?[[:space:]]*${option}[[:space:]]+.*|${option} ${value}|I" /etc/ssh/sshd_config
+  else
+    printf '%s %s\n' "$option" "$value" >> /etc/ssh/sshd_config
+  fi
+}
+
+set_sshd_option PermitRootLogin no
+set_sshd_option PasswordAuthentication no
+set_sshd_option KbdInteractiveAuthentication no
+set_sshd_option ChallengeResponseAuthentication no
+set_sshd_option PermitEmptyPasswords no
+set_sshd_option PubkeyAuthentication yes
+
+if [ -d /etc/ssh/sshd_config.d ]; then
+  printf '%s\n' \
+    'PermitRootLogin no' \
+    'PasswordAuthentication no' \
+    'KbdInteractiveAuthentication no' \
+    'ChallengeResponseAuthentication no' \
+    'PermitEmptyPasswords no' \
+    'PubkeyAuthentication yes' \
+    > /etc/ssh/sshd_config.d/99-kibershluz.conf
+fi
+
+sshd -t
+systemctl reload sshd 2>/dev/null || systemctl reload ssh 2>/dev/null || \
+  service sshd reload 2>/dev/null || service ssh reload
+printf 'kibershluz-bootstrap-ok\n'
+'''
+
     def _verify_lms_access(
         self,
         ip: str,
@@ -638,7 +888,7 @@ Restart-Service sshd
                     time.sleep(5)
             raise RuntimeError(f"key-only SSH to {username}@{ip} failed: {last_error}")
 
-        admin = connect("labadmin", admin_private_key)
+        admin = connect(settings.VM_ADMIN_USER, admin_private_key)
         try:
             _, stdout, stderr = admin.exec_command("sudo -n true", timeout=20)
             if stdout.channel.recv_exit_status() != 0:
@@ -646,7 +896,7 @@ Restart-Service sshd
         finally:
             admin.close()
 
-        student = connect("student", student_private_key)
+        student = connect(settings.VM_STUDENT_USER, student_private_key)
         try:
             _, stdout, _ = student.exec_command("sudo -n true", timeout=20)
             if stdout.channel.recv_exit_status() == 0:
@@ -817,6 +1067,16 @@ Restart-Service sshd
 
         if errors:
             raise RuntimeError("Cleanup is incomplete: " + "; ".join(errors))
+
+        for key_name in (
+            f"key-stand{stand_id}-admin",
+            f"key-stand{stand_id}-student",
+            f"key-stand{stand_id}",
+        ):
+            try:
+                os.remove(f"/app/ssh_keys/{key_name}.pem")
+            except FileNotFoundError:
+                pass
 
     def cleanup_vm(self, name: str, project_id: str = None):
         conn = self._connect(project_id)

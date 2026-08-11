@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import mock_open
 
 import openstack
 
@@ -69,7 +70,7 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
         lambda *_args: SimpleNamespace(name="stand1-sg"),
     )
     monkeypatch.setattr(client, "_assign_floating_ip", lambda *_args: "203.0.113.10")
-    monkeypatch.setattr(client, "_verify_lms_access", lambda *_args: None)
+    monkeypatch.setattr(client, "_prepare_lms_access", lambda *_args: None)
     payload = default_lab3_config().model_dump()
     payload["vms"] = [payload["vms"][0]]
     deployment = DeploymentConfig.model_validate(payload)
@@ -88,3 +89,62 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
     assert "block_device_mapping_v2" not in create_server_kwargs
     assert result["L-MS"]["status"] == "ACTIVE"
     assert result["L-MS"]["floating_ip"] == "203.0.113.10"
+
+
+def test_saved_private_key_is_reused_without_rotating_openstack_keypair(monkeypatch) -> None:
+    private_key, public_key = OpenStackClient._generate_local_keypair()
+
+    class FakeCompute:
+        def __init__(self):
+            self.deleted = []
+            self.created = []
+
+        def find_keypair(self, _name):
+            return SimpleNamespace(name="existing", public_key=public_key + " old-comment")
+
+        def delete_keypair(self, keypair):
+            self.deleted.append(keypair)
+
+        def create_keypair(self, **kwargs):
+            self.created.append(kwargs)
+
+    compute = FakeCompute()
+    client = OpenStackClient()
+    monkeypatch.setattr(client, "_connect", lambda: SimpleNamespace(compute=compute))
+    monkeypatch.setattr("builtins.open", mock_open())
+    monkeypatch.setattr("os.makedirs", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("os.chmod", lambda *_args, **_kwargs: None)
+
+    result = client.create_keypair("key-stand1-admin", private_key=private_key)
+
+    assert result == private_key
+    assert compute.deleted == []
+    assert compute.created == []
+
+
+def test_legacy_access_falls_back_to_password_bootstrap(monkeypatch) -> None:
+    client = OpenStackClient()
+    verification_attempts = []
+    bootstrap_calls = []
+
+    def verify(*args, **kwargs):
+        verification_attempts.append((args, kwargs))
+        if len(verification_attempts) == 1:
+            raise RuntimeError("keys are not installed yet")
+
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_USER", "student")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_PASSWORD", "secret")
+    monkeypatch.setattr("app.core.openstack_client.settings.SSH_BOOTSTRAP_TIMEOUT", 90)
+    monkeypatch.setattr(client, "_verify_lms_access", verify)
+    monkeypatch.setattr(
+        client,
+        "_bootstrap_legacy_lms_access",
+        lambda *args, **kwargs: bootstrap_calls.append((args, kwargs)),
+    )
+
+    client._prepare_lms_access("203.0.113.10", "admin-private", "student-private")
+
+    assert len(verification_attempts) == 2
+    assert verification_attempts[0][1]["max_wait"] == 15
+    assert verification_attempts[1][1]["max_wait"] == 60
+    assert bootstrap_calls[0][1]["max_wait"] == 90

@@ -36,6 +36,12 @@ class Settings(BaseSettings):
      
     VM_ADMIN_USER: str = "labadmin"
     VM_STUDENT_USER: str = "student"
+    # Optional one-time credentials for legacy images without cloud-init.
+    # The password is used only to install per-role SSH keys and is disabled
+    # before a stand is marked READY.
+    VM_BOOTSTRAP_USER: str = ""
+    VM_BOOTSTRAP_PASSWORD: str = ""
+    SSH_BOOTSTRAP_TIMEOUT: int = 240
 
      
     JWT_SECRET_KEY: str = "change-me-in-env"

@@ -71,13 +71,15 @@ async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(
      
     actual_stand_id = str(stand.id)
     result = AsyncResult(actual_stand_id, app=celery_app)
-    meta = result.info if isinstance(result.info, dict) else {}
+    result_info = result.info
+    meta = result_info if isinstance(result_info, dict) else {}
 
     if result.state == "FAILURE" and stand.status.value in ("PENDING", "DEPLOYING"):
+        failure_message = meta.get("error") or str(result_info or "Ошибка развертывания")
         return StatusResponse(
             stand_id=actual_stand_id,
             status="FAILED",
-            message=str(meta.get("error", "Ошибка развертывания"))
+            message=failure_message,
         )
 
     vms = None
