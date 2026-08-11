@@ -74,6 +74,14 @@ export interface StandStatusResponse {
   };
 }
 
+export interface MyStandSummary {
+  stand_id: string;
+  status: StandStatus;
+  ip_address: string | null;
+  expires_at: string | null;
+  created_at: string | null;
+}
+
 export interface CheckResponse {
   stand_id: string;
   check_task_id: string;

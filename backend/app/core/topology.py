@@ -120,13 +120,13 @@ def default_lab3_config(external_network: str = "public") -> DeploymentConfig:
             VMDeploymentSpec(
                 role="L-NFS",
                 image="2_TMP_L-NFS_CentOS7_08.2025.qcow2",
-                flavor="start",
+                flavor="tiny",
                 ip="10.0.0.70",
             ),
             VMDeploymentSpec(
                 role="L-PGSQL",
                 image="2_TMP_L-PGSQL_CentOS7_08.2025.qcow2",
-                flavor="start",
+                flavor="tiny",
                 ip="10.0.0.55",
             ),
             VMDeploymentSpec(

@@ -3,12 +3,40 @@ from fastapi import APIRouter, HTTPException, Depends
 from celery.result import AsyncResult
 from sqlalchemy.orm import Session
 from app.celery_app import celery_app
-from app.schemas.contracts import StatusResponse
+from app.schemas.contracts import StandSummaryResponse, StatusResponse
 from app.core.database import get_db
-from app.core.models import Stand
+from app.core.models import Stand, StandStatusEnum
 from app.core.security import assert_stand_owner_or_teacher, require_student
 
 router = APIRouter()
+
+
+@router.get(
+    "/stands/my",
+    response_model=list[StandSummaryResponse],
+    summary="Получить стенды текущего пользователя",
+)
+async def get_my_stands(db: Session = Depends(get_db), user=Depends(require_student)):
+    """The database is the source of truth; browser storage is only a cache."""
+    stands = (
+        db.query(Stand)
+        .filter(
+            Stand.user_id == int(user.get("user_id", 0)),
+            Stand.status != StandStatusEnum.FREE,
+        )
+        .order_by(Stand.created_at.desc(), Stand.id.desc())
+        .all()
+    )
+    return [
+        StandSummaryResponse(
+            stand_id=str(stand.id),
+            status=stand.status.value,
+            ip_address=stand.ip_address,
+            expires_at=stand.expires_at,
+            created_at=stand.created_at,
+        )
+        for stand in stands
+    ]
 
 @router.get(
     "/status/{stand_id}",
@@ -17,20 +45,16 @@ router = APIRouter()
     description="Возвращает текущий статус стенда из БД и состояние Celery-задачи.",
 )
 async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(require_student)):
-    if stand_id == "latest":
-        stand = db.query(Stand).order_by(Stand.id.desc()).first()
-    elif stand_id == "my":
-         
-        from app.core.security import UserRole
-        if user.get("role") in (UserRole.TEACHER, UserRole.ADMIN):
-            stand = db.query(Stand).order_by(Stand.id.desc()).first()
-        else:
-            stand = (
-                db.query(Stand)
-                .filter(Stand.user_id == int(user.get("user_id", 0)))
-                .order_by(Stand.id.desc())
-                .first()
+    if stand_id in ("latest", "my"):
+        stand = (
+            db.query(Stand)
+            .filter(
+                Stand.user_id == int(user.get("user_id", 0)),
+                Stand.status != StandStatusEnum.FREE,
             )
+            .order_by(Stand.created_at.desc(), Stand.id.desc())
+            .first()
+        )
         if not stand:
             raise HTTPException(status_code=404, detail="Стенд не найден")
     else:

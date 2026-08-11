@@ -13,8 +13,8 @@ def test_default_topology_matches_lab_document() -> None:
         "flavor": "small",
         "ip": "10.0.0.10",
     }
-    assert by_role["L-NFS"]["flavor"] == "start"
-    assert by_role["L-PGSQL"]["flavor"] == "start"
+    assert by_role["L-NFS"]["flavor"] == "tiny"
+    assert by_role["L-PGSQL"]["flavor"] == "tiny"
     assert by_role["W-DC"]["flavor"] == "medium"
     assert by_role["V-HYPERV"]["flavor"] == "large"
 

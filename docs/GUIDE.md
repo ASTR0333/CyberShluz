@@ -386,8 +386,8 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 | Роль | Образ в КИ | UUID | Flavor | IP по умолчанию |
 |---|---|---|---|---|
 | L-MS | `2_TMP_L-MS_Debian11.11_09.2025.qcow2` | `521b868a-ac28-4eb9-9f77-562df86f18db` | `small` | `10.0.0.10` |
-| L-NFS | `2_TMP_L-NFS_CentOS7_08.2025.qcow2` | `3ae20dd5-ae96-4c0b-b8bd-7e3cb225191b` | `start` | `10.0.0.70` |
-| L-PGSQL | `2_TMP_L-PGSQL_CentOS7_08.2025.qcow2` | `dd37703a-8af3-4619-bbd3-c6b69d5e7e8d` | `start` | `10.0.0.55` |
+| L-NFS | `2_TMP_L-NFS_CentOS7_08.2025.qcow2` | `3ae20dd5-ae96-4c0b-b8bd-7e3cb225191b` | `tiny` | `10.0.0.70` |
+| L-PGSQL | `2_TMP_L-PGSQL_CentOS7_08.2025.qcow2` | `dd37703a-8af3-4619-bbd3-c6b69d5e7e8d` | `tiny` | `10.0.0.55` |
 | W-DC | `2_TMP_W-DC_WinSrvStd19_10.2025.qcow2` | `6ac5ebae-979e-48f2-bc4f-5d0a9a701650` | `medium` | `10.0.0.5` |
 | V-HYPERV | `2_TMP_V-HYPERV_WinSrvStd19_10.2025.qcow2` | `c3947f72-fe13-489a-8073-676ffdf9f859` | `large` | `10.0.0.65` |
 
@@ -399,7 +399,7 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 - квоты проекта позволяют создать выбранные ресурсы;
 - внешняя сеть называется `public` либо пользователь выбрал правильное имя в форме.
 
-В форме можно изменить CIDR, gateway, DHCP pool, DNS, external network, образы, flavor и статические IP. DHCP pool не должен пересекаться со статическими IP. L-MS обязательна, поскольку служит точкой входа и bastion для остальных Linux-ВМ.
+В форме можно изменить CIDR, gateway, DHCP pool, DNS, external network, образы, выбрать flavor из списка OpenStack и задать статические IP. DHCP pool не должен пересекаться со статическими IP. L-MS обязательна, поскольку служит точкой входа и bastion для остальных Linux-ВМ.
 
 ## 10. Модель SSH-доступа лабораторного стенда
 

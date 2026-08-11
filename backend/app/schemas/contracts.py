@@ -49,6 +49,22 @@ class StatusResponse(BaseModel):
         return dt.isoformat()
 
 
+class StandSummaryResponse(BaseModel):
+    stand_id: str
+    status: str
+    ip_address: Optional[str] = None
+    expires_at: Optional[datetime] = None
+    created_at: Optional[datetime] = None
+
+    @field_serializer("expires_at", "created_at")
+    def _serialize_summary_utc(self, dt: Optional[datetime]) -> Optional[str]:
+        if dt is None:
+            return None
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.isoformat()
+
+
 class PubkeyRequest(BaseModel):
     public_key: str
 

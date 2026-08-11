@@ -22,13 +22,32 @@ export const LabLaunch = () => {
   const labId = 3;
   const auth = getAuth();
   const isTeacher = auth?.role === 'teacher' || auth?.role === 'admin';
-  const [userId, setUserId] = useState(auth?.username || 'student');
+  const userId = auth?.username || 'student';
   const [isDeploying, setIsDeploying] = useState(false);
   const [standId, setStandId] = useState<string | null>(null);
   const [options, setOptions] = useState<DeploymentOptions | null>(null);
   const [deployment, setDeployment] = useState<DeploymentConfig | null>(null);
   const [showSettings, setShowSettings] = useState(true);
+  const [existingStandChecked, setExistingStandChecked] = useState(isTeacher);
   const navigate = useNavigate();
+
+  useEffect(() => {
+    if (isTeacher) return;
+    let alive = true;
+    mockApi.getMyStands()
+      .then((stands) => {
+        if (!alive) return;
+        if (stands.length > 0) {
+          navigate(`/status/${stands[0].stand_id}`, { replace: true });
+          return;
+        }
+        setExistingStandChecked(true);
+      })
+      .catch(() => {
+        if (alive) setExistingStandChecked(true);
+      });
+    return () => { alive = false; };
+  }, [isTeacher, navigate]);
 
   useEffect(() => {
     mockApi.getDeploymentOptions()
@@ -88,14 +107,14 @@ export const LabLaunch = () => {
   };
 
   const steps = [
-    'Проверка выбранных образов, flavor и IP-адресов',
+    'Проверка выбранных образов, конфигураций и IP-адресов',
     'Проверка квоты с учётом выбранных vCPU',
     'Выделение проекта из пула',
     'Создание изолированной сети и пяти ВМ',
     'Настройка SSH, Security Group и Floating IP',
   ];
 
-  if (!deployment || !options) {
+  if (!deployment || !options || !existingStandChecked) {
     return <div className="max-w-5xl mx-auto p-10 text-center text-cyber-gray-light">Загрузка каталога OpenStack…</div>;
   }
 
@@ -118,16 +137,10 @@ export const LabLaunch = () => {
 
         <div className="grid grid-cols-1 lg:grid-cols-5 divide-y lg:divide-y-0 lg:divide-x divide-cyber-gray-border">
           <div className="lg:col-span-3 p-8 space-y-5">
-            {isTeacher ? (
-              <div>
-                <label className="block text-[11px] font-bold text-cyber-gray-light uppercase tracking-[0.14em] mb-2">Идентификатор студента</label>
-                <input value={userId} onChange={(event) => setUserId(event.target.value)} className="w-full px-4 py-2.5 border border-cyber-gray-border rounded-brand text-sm" />
-              </div>
-            ) : (
-              <div className="w-full px-4 py-2.5 bg-cyber-gray-surface border border-cyber-gray-border rounded-brand text-sm">
-                {auth?.display_name} <span className="font-mono text-cyber-gray-light text-xs">({auth?.username})</span>
-              </div>
-            )}
+            <div className="w-full px-4 py-2.5 bg-cyber-gray-surface border border-cyber-gray-border rounded-brand text-sm">
+              {auth?.display_name} <span className="font-mono text-cyber-gray-light text-xs">({auth?.username})</span>
+              {isTeacher && <span className="ml-2 text-xs text-cyber-blue-accent">Новый стенд будет закреплён за вами</span>}
+            </div>
 
             <div className="grid grid-cols-3 gap-3">
               <Summary icon={<Cpu className="w-4 h-4" />} label="Виртуальные машины" value={`${enabledVMs.length} ВМ`} />
@@ -162,7 +175,7 @@ export const LabLaunch = () => {
                       <div key={vm.role} className="grid grid-cols-1 md:grid-cols-[110px_1fr_150px_130px] gap-2 items-end p-3 bg-cyber-gray-surface rounded-brand border border-gray-200">
                         <div className="font-mono font-bold text-sm text-cyber-blue pb-2.5">{vm.role}</div>
                         <Field label="Образ" value={vm.image} list="image-options" onChange={(value) => updateVM(index, 'image', value)} />
-                        <Field label="Flavor" value={vm.flavor} list="flavor-options" onChange={(value) => updateVM(index, 'flavor', value)} />
+                        <SelectField label="Конфигурация" value={vm.flavor} options={options.flavors} onChange={(value) => updateVM(index, 'flavor', value)} />
                         <Field label="IP-адрес" value={vm.ip} onChange={(value) => updateVM(index, 'ip', value)} />
                       </div>
                     ))}
@@ -172,7 +185,6 @@ export const LabLaunch = () => {
             )}
 
             <datalist id="image-options">{options.images.map((value) => <option key={value} value={value} />)}</datalist>
-            <datalist id="flavor-options">{options.flavors.map((value) => <option key={value} value={value} />)}</datalist>
             <datalist id="external-networks">{options.external_networks.map((value) => <option key={value} value={value} />)}</datalist>
 
             <DeployButton onClick={handleDeploy} isLoading={isDeploying} className="w-full">
@@ -218,5 +230,16 @@ const Field = ({ label, value, onChange, list }: { label: string; value: string;
   <label className="block min-w-0">
     <span className="block text-[10px] font-bold text-cyber-gray-light uppercase tracking-wider mb-1">{label}</span>
     <input value={value} list={list} onChange={(event) => onChange(event.target.value)} className="w-full px-3 py-2 bg-white border border-cyber-gray-border rounded text-xs font-mono focus:outline-none focus:border-cyber-blue-accent" />
+  </label>
+);
+
+const SelectField = ({ label, value, options, onChange }: { label: string; value: string; options: string[]; onChange: (value: string) => void }) => (
+  <label className="block min-w-0">
+    <span className="block text-[10px] font-bold text-cyber-gray-light uppercase tracking-wider mb-1">{label}</span>
+    <select value={value} onChange={(event) => onChange(event.target.value)} className="w-full px-3 py-2 bg-white border border-cyber-gray-border rounded text-xs font-mono focus:outline-none focus:border-cyber-blue-accent">
+      {options.length === 0 && <option value={value}>{value || 'Нет доступных конфигураций'}</option>}
+      {value && !options.includes(value) && <option value={value} disabled>{value} (недоступна)</option>}
+      {options.map((option) => <option key={option} value={option}>{option}</option>)}
+    </select>
   </label>
 );

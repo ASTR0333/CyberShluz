@@ -18,10 +18,11 @@ class CapacityExceededException(Exception):
 
 
 class OpenStackClient:
-    def __init__(self):
+    def __init__(self, project_ref: str | None = None):
         self._conn = None
+        self.project_ref = project_ref
 
-    def _connect(self, project_id: str = None) -> openstack.connection.Connection:
+    def _connect(self, project_ref: str | None = None) -> openstack.connection.Connection:
         kwargs = dict(
             auth_url=settings.OS_AUTH_URL,
             username=settings.OS_USERNAME,
@@ -33,14 +34,18 @@ class OpenStackClient:
             interface="public",
             connect_timeout=30,
         )
-        if project_id:
-            kwargs["project_id"] = project_id
+        target = project_ref or self.project_ref
+        if target and ":slot" in target:
+            # A logical pool can contain several slots in one OpenStack project.
+            kwargs["project_name"] = target.split(":slot", 1)[0]
+        elif target:
+            kwargs["project_id"] = target
         else:
             kwargs["project_name"] = settings.OS_PROJECT_NAME or "hackhaton_team01"
         return openstack.connect(**kwargs)
 
-    def get_project_connection(self, project_id: str = None) -> openstack.connection.Connection:
-        return self._connect(project_id)
+    def get_project_connection(self, project_ref: str | None = None) -> openstack.connection.Connection:
+        return self._connect(project_ref)
 
      
     def check_capacity(self, required_vcpus: int = 10) -> float:
@@ -91,20 +96,29 @@ class OpenStackClient:
         }
 
     def required_vcpus(self, deployment: DeploymentConfig) -> int:
-        """Resolve selected flavors and calculate the quota impact before allocation."""
+        """Validate catalog selections and calculate quota impact before allocation."""
         conn = self._connect()
         required = 0
-        missing: list[str] = []
+        missing_flavors: list[str] = []
+        missing_images: list[str] = []
         for vm in deployment.vms:
             if not vm.enabled:
                 continue
+            if not conn.compute.find_image(vm.image):
+                missing_images.append(f"{vm.role}: {vm.image}")
             flavor = conn.compute.find_flavor(vm.flavor)
             if not flavor:
-                missing.append(f"{vm.role}: {vm.flavor}")
+                missing_flavors.append(f"{vm.role}: {vm.flavor}")
                 continue
             required += int(flavor.vcpus or 0)
-        if missing:
-            raise ValueError("OpenStack flavors not found: " + ", ".join(missing))
+        if missing_images:
+            raise ValueError("OpenStack images not found: " + ", ".join(missing_images))
+        if missing_flavors:
+            raise ValueError("OpenStack flavors not found: " + ", ".join(missing_flavors))
+        if not conn.network.find_network(deployment.network.external_network):
+            raise ValueError(
+                f"External network '{deployment.network.external_network}' was not found"
+            )
         return required
 
      
@@ -277,6 +291,7 @@ class OpenStackClient:
         student_private_key: str,
         deployment: DeploymentConfig | None = None,
         progress_cb=None,
+        resource_cb=None,
     ) -> dict[str, dict]:
         conn = self._connect()
         deployment = deployment or default_lab3_config()
@@ -291,6 +306,8 @@ class OpenStackClient:
         sg = self._ensure_security_group(conn, stand_id, deployment.network.cidr)
 
         results = {}
+        if resource_cb:
+            resource_cb(results, net_info)
         total = len(topology)
         for idx, (vm_role, spec) in enumerate(topology.items()):
             vm_name = f"stand{stand_id}-{vm_role}"
@@ -320,49 +337,64 @@ class OpenStackClient:
                     res["floating_ip"] = floating_ip
                 
                 results[vm_role] = res
+                if resource_cb:
+                    resource_cb(results, net_info)
                 print(f"[OpenStack] {vm_name} already exists ({existing.status}), skipping")
                 continue
+
+            if existing:
+                # A failed server with the same name would make retries look
+                # successful while Nova never builds a fresh instance.
+                conn.compute.delete_server(existing)
+                conn.compute.wait_for_delete(existing, wait=120)
 
             image = conn.compute.find_image(spec["image"])
             if not image:
                 raise ValueError(f"Image '{spec['image']}' not found for {vm_role}")
 
-             
-            glance_image = conn.image.find_image(spec["image"])
-            image_min_disk = (glance_image.min_disk if glance_image else 0) or 0
-
             flavor = conn.compute.find_flavor(spec["flavor"])
             if not flavor:
                 raise ValueError(f"Flavor '{spec['flavor']}' not found for {vm_role}")
 
-             
-             
-            vol_size = max(20, image_min_disk)
-
-            bdm = [{
-                "boot_index": 0,
-                "uuid": image.id,
-                "source_type": "image",
-                "destination_type": "volume",
-                "volume_size": vol_size,
-                "delete_on_termination": True,
-            }]
-
-             
-             
             admin_pubkey = conn.compute.get_keypair(admin_key_name).public_key
             student_pubkey = conn.compute.get_keypair(student_key_name).public_key
             user_data = self.build_user_data(vm_role, admin_pubkey, student_pubkey)
 
-            server = conn.compute.create_server(
+            server_args = dict(
                 name=vm_name,
                 flavor_id=flavor.id,
                 networks=[{"uuid": network.id, "fixed_ip": spec["ip"]}],
                 key_name=admin_key_name,
                 security_groups=[{"name": sg.name}],
-                block_device_mapping_v2=bdm,
                 user_data=user_data,
             )
+            image_details = image
+            if getattr(conn, "image", None):
+                image_details = conn.image.find_image(spec["image"]) or image
+            image_min_disk = int(getattr(image_details, "min_disk", 0) or 0)
+            virtual_size = int(getattr(image_details, "virtual_size", 0) or 0)
+            virtual_size_gb = (virtual_size + (1024 ** 3) - 1) // (1024 ** 3)
+            required_disk = max(image_min_disk, virtual_size_gb)
+            flavor_disk = int(getattr(flavor, "disk", 0) or 0)
+            if flavor_disk > 0 and flavor_disk >= required_disk:
+                # Prefer Nova's direct image boot. The old implementation sent
+                # every VM through Cinder, so a volume quota/backend problem
+                # left only keypairs and a network behind.
+                server_args["image_id"] = image.id
+            else:
+                # Diskless flavors explicitly require a boot volume.
+                server_args["block_device_mapping_v2"] = [
+                    {
+                        "boot_index": 0,
+                        "uuid": image.id,
+                        "source_type": "image",
+                        "destination_type": "volume",
+                        "volume_size": max(20, required_disk),
+                        "delete_on_termination": True,
+                    }
+                ]
+
+            server = conn.compute.create_server(**server_args)
 
             results[vm_role] = {
                 "server_id": server.id,
@@ -370,6 +402,8 @@ class OpenStackClient:
                 "expected_ip": spec["ip"],
                 "status": "BUILD",
             }
+            if resource_cb:
+                resource_cb(results, net_info)
 
         for vm_role, info in results.items():
             if info.get("status") == "ACTIVE":
@@ -390,6 +424,8 @@ class OpenStackClient:
                 print(f"[OpenStack] Wait for {vm_role} failed: {e}")
                 info["ip"] = info["expected_ip"]
                 info["status"] = "ERROR"
+            if resource_cb:
+                resource_cb(results, net_info)
 
          
          
@@ -409,6 +445,8 @@ class OpenStackClient:
                     if floating_ip:
                         vm_info["floating_ip"] = floating_ip
                         print(f"[OpenStack] Floating IP {floating_ip} assigned to {vm_role}")
+                        if resource_cb:
+                            resource_cb(results, net_info)
                 except Exception as e:
                     print(f"[OpenStack] Floating IP assignment failed for {vm_role}: {e}")
 

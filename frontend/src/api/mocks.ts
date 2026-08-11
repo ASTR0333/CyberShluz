@@ -11,6 +11,7 @@ import type {
   PoolProject,
   StudentStand,
   DeploymentOptions,
+  MyStandSummary,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
@@ -104,6 +105,8 @@ export const mockApi = {
 
   getStatus: (stand_id: string): Promise<StandStatusResponse> =>
     apiFetch(`/status/${stand_id}`),
+
+  getMyStands: (): Promise<MyStandSummary[]> => apiFetch('/stands/my'),
 
   freeze: (stand_id: string, reason?: string): Promise<{ stand_id: string; status: string; frozen_until: string }> =>
     apiFetch(`/freeze/${stand_id}`, {

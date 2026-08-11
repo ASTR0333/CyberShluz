@@ -14,6 +14,7 @@ def deploy_stand_task(
     lab_id: int,
     role: str = "student",
     deployment_config: dict | None = None,
+    project_ref: str | None = None,
 ):
     from app.core.database import SessionLocal
     from app.core.models import Stand, StandStatusEnum
@@ -31,7 +32,7 @@ def deploy_stand_task(
 
     try:
         progress_cb(5, "Подключение к Кибер Инфраструктуре...")
-        os_client = OpenStackClient()
+        os_client = OpenStackClient(project_ref=project_ref)
         deployment = (
             DeploymentConfig.model_validate(deployment_config)
             if deployment_config
@@ -54,6 +55,21 @@ def deploy_stand_task(
 
         enabled_count = len(deployment.enabled_topology())
         progress_cb(30, f"Развёртывание топологии Лаб. №3 ({enabled_count} ВМ)...")
+
+        def resource_cb(vm_results, network_details):
+            # Persist partial progress. A refresh, worker retry or Nova error no
+            # longer makes already-created instances disappear from the UI.
+            with SessionLocal() as resource_db:
+                resource_stand = (
+                    resource_db.query(Stand)
+                    .filter(Stand.id == int(stand_id))
+                    .first()
+                )
+                if resource_stand:
+                    resource_stand.vm_details = json.dumps(vm_results, default=str)
+                    resource_stand.network_details = json.dumps(network_details, default=str)
+                    resource_db.commit()
+
         vm_results = os_client.deploy_lab3_stand(
             stand_id,
             admin_key_name,
@@ -62,6 +78,7 @@ def deploy_stand_task(
             student_private_key,
             deployment=deployment,
             progress_cb=progress_cb,
+            resource_cb=resource_cb,
         )
          
         net_details = vm_results.pop("__network__", None)
@@ -141,7 +158,17 @@ def cleanup_stand_task(self, stand_id: str):
     self.update_state(state="CLEANING", meta={"progress": 10, "message": "Удаление ВМ из кластера..."})
 
     try:
-        os_client = OpenStackClient()
+        from app.core.database import SessionLocal
+        from app.core.models import Stand
+
+        with SessionLocal() as lookup_db:
+            lookup_stand = lookup_db.query(Stand).filter(Stand.id == int(stand_id)).first()
+            project_ref = (
+                lookup_stand.project.openstack_project_id
+                if lookup_stand and lookup_stand.project
+                else None
+            )
+        os_client = OpenStackClient(project_ref=project_ref)
         os_client.cleanup_lab3_stand(stand_id)
     except Exception as e:
         print(f"[WORKER] OpenStack cleanup failed: {e}")

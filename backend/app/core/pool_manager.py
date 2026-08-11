@@ -6,6 +6,22 @@ from typing import Optional
 
 from app.core.models import RoleEnum, Stand, StandStatusEnum, User
 
+
+ACTIVE_STAND_STATUSES = (
+    StandStatusEnum.PENDING,
+    StandStatusEnum.DEPLOYING,
+    StandStatusEnum.READY,
+    StandStatusEnum.FREEZE,
+    StandStatusEnum.CLEANING,
+)
+
+
+class ActiveStandExistsError(Exception):
+    def __init__(self, stand: Stand):
+        self.stand_id = int(stand.id)
+        self.stand_status = stand.status.value
+        super().__init__(f"User already has active stand {self.stand_id}")
+
 class PoolManager:
     """
     PoolManager - Логика пула с атомарной блокировкой. 
@@ -20,12 +36,30 @@ class PoolManager:
         """
         try:
              
-            user = self.db.query(User).filter(User.lms_id == lms_user_id).first()
+            user = (
+                self.db.query(User)
+                .filter(User.lms_id == lms_user_id)
+                .with_for_update()
+                .first()
+            )
             if not user:
                 user = User(lms_id=lms_user_id, role=role)
                 self.db.add(user)
-                self.db.commit()
-                self.db.refresh(user)
+                self.db.flush()
+
+            # Locking the user row makes the one-stand rule safe against two
+            # deploy requests arriving at the same time.
+            if role == RoleEnum.STUDENT:
+                active = (
+                    self.db.query(Stand)
+                    .filter(
+                        Stand.user_id == user.id,
+                        Stand.status.in_(ACTIVE_STAND_STATUSES),
+                    )
+                    .first()
+                )
+                if active:
+                    raise ActiveStandExistsError(active)
 
              
             stand = (
@@ -53,6 +87,9 @@ class PoolManager:
             self.db.refresh(stand)
             return stand
 
+        except ActiveStandExistsError:
+            self.db.rollback()
+            raise
         except SQLAlchemyError as e:
             self.db.rollback()
              

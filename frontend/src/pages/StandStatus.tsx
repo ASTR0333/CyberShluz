@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { mockApi } from '../api/mocks';
-import type { StandStatusResponse, CheckResultResponse } from '../types/api';
+import { getAuth, mockApi } from '../api/mocks';
+import type { StandStatusResponse, CheckResultResponse, MyStandSummary } from '../types/api';
 import { ProgressBadge } from '../components/ProgressBadge';
 import { StandTerminal } from '../components/StandTerminal';
 import {
@@ -91,18 +91,12 @@ function NoStandScreen() {
 export const StandStatus = () => {
   const { stand_id: paramId } = useParams<{ stand_id: string }>();
   const navigate = useNavigate();
+  const auth = getAuth();
+  const canHaveMultipleStands = auth?.role === 'teacher' || auth?.role === 'admin';
 
 
   const [resolvedId, setResolvedId] = useState<string | null>(null);
   const [noStand, setNoStand] = useState(false);
-
-  useEffect(() => {
-
-
-    setNoStand(false);
-    setResolvedId(!paramId || paramId === 'my' ? 'my' : paramId);
-  }, [paramId]);
-
   const [status, setStatus] = useState<StandStatusResponse | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<CheckResultResponse | null>(null);
@@ -113,6 +107,13 @@ export const StandStatus = () => {
   const [keySubmitted, setKeySubmitted] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [manualConfirmations, setManualConfirmations] = useState<string[]>([]);
+  const [myStands, setMyStands] = useState<MyStandSummary[]>([]);
+
+  useEffect(() => {
+    setNoStand(false);
+    setStatus(null);
+    setResolvedId(!paramId || paramId === 'my' ? 'my' : paramId);
+  }, [paramId]);
 
   const isFrozenStatus = status?.status === 'FREEZE';
   const countdownTarget = isFrozenStatus ? (status?.frozen_until ?? null) : (status?.expires_at ?? null);
@@ -135,7 +136,7 @@ export const StandStatus = () => {
       }
     } catch (err) {
 
-      if (resolvedId === 'my' && err instanceof Error && /найд/i.test(err.message)) {
+      if (err instanceof Error && /найд|принадлежит/i.test(err.message)) {
         setStatus(null);
         setNoStand(true);
       }
@@ -149,6 +150,17 @@ export const StandStatus = () => {
     const interval = setInterval(poll, 3000);
     return () => clearInterval(interval);
   }, [poll, resolvedId]);
+
+  useEffect(() => {
+    if (!canHaveMultipleStands) return;
+    let alive = true;
+    const refresh = () => mockApi.getMyStands()
+      .then((stands) => { if (alive) setMyStands(stands); })
+      .catch(() => undefined);
+    refresh();
+    const interval = setInterval(refresh, 5000);
+    return () => { alive = false; clearInterval(interval); };
+  }, [canHaveMultipleStands]);
 
   const handleRunCheck = async () => {
     if (!standId) return;
@@ -190,7 +202,8 @@ export const StandStatus = () => {
       await mockApi.cleanup(standId);
       toast.success('Стенд отправлен на очистку');
       localStorage.removeItem('my_stand_id');
-      setTimeout(() => navigate('/launch'), 2000);
+      const nextStand = myStands.find((item) => item.stand_id !== standId && item.status !== 'CLEANING');
+      setTimeout(() => navigate(nextStand ? `/status/${nextStand.stand_id}` : '/launch'), 2000);
     } catch {
       toast.error('Ошибка завершения');
     } finally {
@@ -253,6 +266,23 @@ export const StandStatus = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      {canHaveMultipleStands && myStands.length > 0 && (
+        <div className="flex items-center justify-between gap-4 bg-cyber-gray-surface border border-cyber-gray-border rounded-brand px-5 py-3">
+          <div>
+            <p className="text-[10px] font-bold text-cyber-gray-light uppercase tracking-wider">Мои стенды</p>
+            <p className="text-xs text-cyber-gray-light">Можно запускать несколько и переключаться между ними</p>
+          </div>
+          <select
+            value={standId || ''}
+            onChange={(event) => navigate(`/status/${event.target.value}`)}
+            className="min-w-48 px-3 py-2 bg-white border border-cyber-gray-border rounded text-sm font-mono focus:outline-none focus:border-cyber-blue-accent"
+          >
+            {myStands.map((item) => (
+              <option key={item.stand_id} value={item.stand_id}>#{item.stand_id} — {item.status}</option>
+            ))}
+          </select>
+        </div>
+      )}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
 

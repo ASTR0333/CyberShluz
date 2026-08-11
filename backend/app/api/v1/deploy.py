@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from app.schemas.contracts import DeployRequest, DeploymentOptionsResponse, DeployResponse
 from app.tasks.deploy import deploy_stand_task
-from app.core.pool_manager import PoolManager
+from app.core.pool_manager import ActiveStandExistsError, PoolManager
 from app.core.database import get_db
 from app.core.models import RoleEnum, Stand, StandStatusEnum, User
 from app.core.openstack_client import OpenStackClient, CapacityExceededException
@@ -127,7 +127,16 @@ async def deploy(
     role_enum = RoleEnum.STUDENT if request.role == "student" else RoleEnum.TEACHER
     
      
-    stand = pool_manager.allocate_stand(lms_user_id=request.user_id, role=role_enum)
+    try:
+        stand = pool_manager.allocate_stand(lms_user_id=request.user_id, role=role_enum)
+    except ActiveStandExistsError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"У вас уже есть активный стенд #{exc.stand_id} "
+                f"({exc.stand_status}). Завершите его, прежде чем запускать новый."
+            ),
+        ) from exc
 
     if not stand:
          
@@ -159,6 +168,7 @@ async def deploy(
                 request.lab_id,
                 request.role,
                 deployment.model_dump(mode="json"),
+                stand.project.openstack_project_id,
             ],
             task_id=stand_id_str,
         )
