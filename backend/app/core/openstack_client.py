@@ -491,6 +491,7 @@ class OpenStackClient:
                         vm_info["floating_ip"],
                         admin_private_key,
                         student_private_key,
+                        progress_cb,
                     )
                     vm_info["ssh_bootstrapped"] = True
                 except Exception as e:
@@ -637,11 +638,16 @@ Restart-Service sshd
         ip: str,
         admin_private_key: str,
         student_private_key: str,
+        progress_cb=None,
     ) -> None:
         """Use cloud-init keys when available, otherwise harden a legacy image."""
         timeout = max(1, int(settings.SSH_BOOTSTRAP_TIMEOUT))
         bootstrap_user = settings.VM_BOOTSTRAP_USER.strip()
         bootstrap_password = settings.VM_BOOTSTRAP_PASSWORD
+
+        def progress(message: str) -> None:
+            if progress_cb:
+                progress_cb(98, message)
 
         if bool(bootstrap_user) != bool(bootstrap_password):
             raise SSHBootstrapError(
@@ -650,41 +656,49 @@ Restart-Service sshd
 
         if bootstrap_user:
             # A short probe keeps cloud-init images on the passwordless path.
+            progress("Проверка SSH-ключей cloud-init на L-MS...")
             try:
                 self._verify_lms_access(
                     ip,
                     admin_private_key,
                     student_private_key,
                     max_wait=min(15, timeout),
+                    progress_cb=progress,
                 )
                 return
             except Exception as key_error:
                 print(f"[OpenStack] Initial key-only SSH probe failed: {key_error}")
 
+            progress(f"Ожидание парольного SSH на L-MS (до {timeout} с)...")
             self._bootstrap_legacy_lms_access(
                 ip,
                 admin_private_key,
                 student_private_key,
                 max_wait=timeout,
+                progress_cb=progress,
             )
 
             try:
+                progress("Проверка установленных ключей labadmin и student...")
                 self._verify_lms_access(
                     ip,
                     admin_private_key,
                     student_private_key,
                     max_wait=min(60, timeout),
+                    progress_cb=progress,
                 )
                 return
             except Exception as exc:
                 raise SSHBootstrapError(f"post-bootstrap key verification failed: {exc}") from exc
 
         try:
+            progress(f"Ожидание SSH-ключей cloud-init на L-MS (до {timeout} с)...")
             self._verify_lms_access(
                 ip,
                 admin_private_key,
                 student_private_key,
                 max_wait=timeout,
+                progress_cb=progress,
             )
         except Exception as exc:
             raise SSHBootstrapError(
@@ -698,6 +712,7 @@ Restart-Service sshd
         admin_private_key: str,
         student_private_key: str,
         max_wait: int,
+        progress_cb=None,
     ) -> None:
         """Enter once with the image password, install keys, then disable passwords."""
         import paramiko
@@ -718,20 +733,25 @@ Restart-Service sshd
         admin_key_b64 = base64.b64encode(admin_public.encode("utf-8")).decode("ascii")
         student_key_b64 = base64.b64encode(student_public.encode("utf-8")).decode("ascii")
 
-        deadline = time.time() + max_wait
+        started = time.monotonic()
+        deadline = started + max_wait
         last_error: Exception | None = None
         client = None
-        while time.time() < deadline:
+        while time.monotonic() < deadline:
+            if progress_cb:
+                elapsed = min(max_wait, int(time.monotonic() - started))
+                progress_cb(f"Ожидание парольного SSH на L-MS: {elapsed}/{max_wait} с")
             candidate = paramiko.SSHClient()
             candidate.set_missing_host_key_policy(paramiko.AutoAddPolicy())
             try:
+                remaining = max(1, deadline - time.monotonic())
                 candidate.connect(
                     hostname=ip,
                     username=bootstrap_user,
                     password=bootstrap_password,
-                    timeout=10,
-                    banner_timeout=15,
-                    auth_timeout=15,
+                    timeout=min(10, remaining),
+                    banner_timeout=min(15, remaining),
+                    auth_timeout=min(15, remaining),
                     look_for_keys=False,
                     allow_agent=False,
                 )
@@ -745,7 +765,9 @@ Restart-Service sshd
             except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as exc:
                 last_error = exc
                 candidate.close()
-                time.sleep(5)
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    time.sleep(min(5, remaining))
 
         if client is None:
             raise SSHBootstrapError(
@@ -859,25 +881,32 @@ printf 'kibershluz-bootstrap-ok\n'
         admin_private_key: str,
         student_private_key: str,
         max_wait: int = 240,
+        progress_cb=None,
     ) -> None:
-        """Fail closed unless both roles work and only the admin can use sudo."""
+        """Verify both roles within one shared deadline and enforce sudo policy."""
         import paramiko
         import socket
 
+        started = time.monotonic()
+        deadline = started + max_wait
+
         def connect(username: str, private_key: str):
-            deadline = time.time() + max_wait
             last_error: Exception | None = None
-            while time.time() < deadline:
+            while time.monotonic() < deadline:
+                if progress_cb:
+                    elapsed = min(max_wait, int(time.monotonic() - started))
+                    progress_cb(f"Проверка SSH-ключа {username}: {elapsed}/{max_wait} с")
                 client = paramiko.SSHClient()
                 client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
                 try:
+                    remaining = max(1, deadline - time.monotonic())
                     client.connect(
                         hostname=ip,
                         username=username,
                         pkey=self._paramiko_key(private_key),
-                        timeout=10,
-                        banner_timeout=15,
-                        auth_timeout=15,
+                        timeout=min(10, remaining),
+                        banner_timeout=min(15, remaining),
+                        auth_timeout=min(15, remaining),
                         look_for_keys=False,
                         allow_agent=False,
                     )
@@ -885,11 +914,17 @@ printf 'kibershluz-bootstrap-ok\n'
                 except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as exc:
                     last_error = exc
                     client.close()
-                    time.sleep(5)
-            raise RuntimeError(f"key-only SSH to {username}@{ip} failed: {last_error}")
+                    remaining = deadline - time.monotonic()
+                    if remaining > 0:
+                        time.sleep(min(5, remaining))
+            raise RuntimeError(
+                f"key-only SSH to {username}@{ip} failed within shared {max_wait}s timeout: {last_error}"
+            )
 
         admin = connect(settings.VM_ADMIN_USER, admin_private_key)
         try:
+            if progress_cb:
+                progress_cb(f"Проверка sudo для {settings.VM_ADMIN_USER}...")
             _, stdout, stderr = admin.exec_command("sudo -n true", timeout=20)
             if stdout.channel.recv_exit_status() != 0:
                 raise RuntimeError(stderr.read().decode(errors="ignore")[:300] or "admin sudo failed")
@@ -898,6 +933,8 @@ printf 'kibershluz-bootstrap-ok\n'
 
         student = connect(settings.VM_STUDENT_USER, student_private_key)
         try:
+            if progress_cb:
+                progress_cb(f"Проверка ограничений для {settings.VM_STUDENT_USER}...")
             _, stdout, _ = student.exec_command("sudo -n true", timeout=20)
             if stdout.channel.recv_exit_status() == 0:
                 raise RuntimeError("student unexpectedly has sudo access")

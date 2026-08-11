@@ -1,7 +1,9 @@
 from types import SimpleNamespace
 from unittest.mock import mock_open
+import socket
 
 import openstack
+import pytest
 
 from app.core.openstack_client import OpenStackClient
 from app.core.topology import DeploymentConfig, default_lab3_config
@@ -148,3 +150,53 @@ def test_legacy_access_falls_back_to_password_bootstrap(monkeypatch) -> None:
     assert verification_attempts[0][1]["max_wait"] == 15
     assert verification_attempts[1][1]["max_wait"] == 60
     assert bootstrap_calls[0][1]["max_wait"] == 90
+
+
+def test_key_verification_uses_one_shared_timeout(monkeypatch) -> None:
+    client = OpenStackClient()
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+
+    class Stream:
+        def __init__(self, status=0):
+            self.channel = SimpleNamespace(recv_exit_status=lambda: status)
+
+        def read(self):
+            return b""
+
+    class FakeSSHClient:
+        def set_missing_host_key_policy(self, _policy):
+            pass
+
+        def connect(self, **kwargs):
+            if kwargs["username"] == "labadmin":
+                clock.now += 6
+                return
+            raise socket.timeout("student key is not ready")
+
+        def exec_command(self, *_args, **_kwargs):
+            return None, Stream(0), Stream(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.openstack_client.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("app.core.openstack_client.time.sleep", clock.sleep)
+    monkeypatch.setattr("paramiko.SSHClient", FakeSSHClient)
+    monkeypatch.setattr(client, "_paramiko_key", lambda _key: object())
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_ADMIN_USER", "labadmin")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_STUDENT_USER", "student")
+
+    with pytest.raises(RuntimeError, match="shared 10s timeout"):
+        client._verify_lms_access("203.0.113.10", "admin-private", "student-private", max_wait=10)
+
+    assert clock.now == 10

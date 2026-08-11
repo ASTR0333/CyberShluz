@@ -19,6 +19,12 @@ celery_app.conf.update(
     task_track_started=True,
     broker_connection_retry_on_startup=True,
     worker_prefetch_multiplier=1,
+    # Status endpoints read deployment progress from Redis. Keep that optional
+    # lookup bounded so the database-backed page remains available if Redis is
+    # temporarily unreachable.
+    redis_socket_connect_timeout=3.0,
+    redis_socket_timeout=3.0,
+    redis_retry_on_timeout=False,
 )
 
 celery_app.conf.beat_schedule = {

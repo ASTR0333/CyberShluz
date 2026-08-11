@@ -97,6 +97,7 @@ export const StandStatus = () => {
 
   const [resolvedId, setResolvedId] = useState<string | null>(null);
   const [noStand, setNoStand] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [status, setStatus] = useState<StandStatusResponse | null>(null);
   const [isChecking, setIsChecking] = useState(false);
   const [checkResult, setCheckResult] = useState<CheckResultResponse | null>(null);
@@ -111,6 +112,7 @@ export const StandStatus = () => {
 
   useEffect(() => {
     setNoStand(false);
+    setLoadError(null);
     setStatus(null);
     setResolvedId(!paramId || paramId === 'my' ? 'my' : paramId);
   }, [paramId]);
@@ -128,6 +130,7 @@ export const StandStatus = () => {
       const data = await mockApi.getStatus(resolvedId);
       setStatus(data);
       setNoStand(false);
+      setLoadError(null);
 
       if (data.status === 'FREE') {
         localStorage.removeItem('my_stand_id');
@@ -139,6 +142,9 @@ export const StandStatus = () => {
       if (err instanceof Error && /найд|принадлежит/i.test(err.message)) {
         setStatus(null);
         setNoStand(true);
+        setLoadError(null);
+      } else {
+        setLoadError(err instanceof Error ? err.message : 'Не удалось получить статус стенда');
       }
 
     }
@@ -231,7 +237,29 @@ export const StandStatus = () => {
 
   if (noStand) return <NoStandScreen />;
 
-  if (!resolvedId || !status) return (
+  if (!resolvedId) return (
+    <div className="flex justify-center items-center h-64">
+      <Loader2 className="w-8 h-8 animate-spin text-cyber-blue" />
+    </div>
+  );
+
+  if (!status && loadError) return (
+    <div className="max-w-lg mx-auto mt-16 text-center">
+      <div className="bg-white rounded-brand shadow-sm border border-red-200 p-10">
+        <Info className="w-10 h-10 text-red-500 mx-auto mb-4" />
+        <h2 className="text-xl font-bold text-cyber-gray-dark mb-2">Не удалось загрузить стенд</h2>
+        <p className="text-sm text-red-700 mb-6">{loadError}</p>
+        <button
+          onClick={() => void poll()}
+          className="inline-flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue transition-colors"
+        >
+          Повторить
+        </button>
+      </div>
+    </div>
+  );
+
+  if (!status) return (
     <div className="flex justify-center items-center h-64">
       <Loader2 className="w-8 h-8 animate-spin text-cyber-blue" />
     </div>
@@ -266,6 +294,12 @@ export const StandStatus = () => {
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
+      {loadError && (
+        <div className="text-sm text-red-700 bg-red-50 p-3 rounded-brand border border-red-200 flex items-center justify-between gap-4">
+          <span>Статус временно не обновляется: {loadError}</span>
+          <button onClick={() => void poll()} className="font-semibold underline whitespace-nowrap">Повторить</button>
+        </div>
+      )}
       {canHaveMultipleStands && myStands.length > 0 && (
         <div className="flex items-center justify-between gap-4 bg-cyber-gray-surface border border-cyber-gray-border rounded-brand px-5 py-3">
           <div>

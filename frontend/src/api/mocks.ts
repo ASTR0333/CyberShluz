@@ -53,6 +53,12 @@ export function clearAuth() {
 
 async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   const auth = getAuth();
+  const timeoutController = new AbortController();
+  const timeoutId = window.setTimeout(() => timeoutController.abort(), 15_000);
+  if (options?.signal) {
+    if (options.signal.aborted) timeoutController.abort(options.signal.reason);
+    else options.signal.addEventListener('abort', () => timeoutController.abort(options.signal?.reason), { once: true });
+  }
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...((options?.headers as Record<string, string>) || {}),
@@ -60,7 +66,17 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
   if (auth?.access_token) {
     headers['Authorization'] = `Bearer ${auth.access_token}`;
   }
-  const res = await fetch(`${API_BASE_URL}${url}`, { ...options, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE_URL}${url}`, { ...options, headers, signal: timeoutController.signal });
+  } catch (error) {
+    if (timeoutController.signal.aborted && !options?.signal?.aborted) {
+      throw new Error('Сервер не ответил за 15 секунд', { cause: error });
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
   if (res.status === 401) {
 
     clearAuth();

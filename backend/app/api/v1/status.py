@@ -1,6 +1,6 @@
 import json
+import logging
 from fastapi import APIRouter, HTTPException, Depends
-from celery.result import AsyncResult
 from sqlalchemy.orm import Session
 from app.celery_app import celery_app
 from app.schemas.contracts import StandSummaryResponse, StatusResponse
@@ -9,6 +9,7 @@ from app.core.models import Stand, StandStatusEnum
 from app.core.security import assert_stand_owner_or_teacher, require_student
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get(
@@ -70,11 +71,20 @@ async def get_status(stand_id: str, db: Session = Depends(get_db), user=Depends(
 
      
     actual_stand_id = str(stand.id)
-    result = AsyncResult(actual_stand_id, app=celery_app)
-    result_info = result.info
+    # Redis contains transient Celery progress only; the stand row remains the
+    # source of truth. A Redis outage must not make a refreshed status page hang
+    # or fail when the database is still available.
+    result_state = "PENDING"
+    result_info = None
+    try:
+        task_meta = celery_app.backend.get_task_meta(actual_stand_id)
+        result_state = str(task_meta.get("status", "PENDING"))
+        result_info = task_meta.get("result")
+    except Exception as exc:
+        logger.warning("Celery status is unavailable for stand %s: %s", actual_stand_id, exc)
     meta = result_info if isinstance(result_info, dict) else {}
 
-    if result.state == "FAILURE" and stand.status.value in ("PENDING", "DEPLOYING"):
+    if result_state == "FAILURE" and stand.status.value in ("PENDING", "DEPLOYING"):
         failure_message = meta.get("error") or str(result_info or "Ошибка развертывания")
         return StatusResponse(
             stand_id=actual_stand_id,
