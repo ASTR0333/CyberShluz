@@ -9,13 +9,22 @@ import {
   useLocation,
 } from 'react-router-dom';
 import { Toaster } from 'react-hot-toast';
-import { Loader2, Menu, X } from 'lucide-react';
+import {
+  Box,
+  LayoutDashboard,
+  Loader2,
+  LogOut,
+  Menu,
+  Monitor,
+  MonitorPlay,
+  Settings,
+  X,
+} from 'lucide-react';
 import { LabLaunch } from './pages/LabLaunch';
 import { StandStatus } from './pages/StandStatus';
 import { TeacherDashboard } from './pages/TeacherDashboard';
 import { AdminSettings } from './pages/AdminSettings';
 import { Login } from './pages/Login';
-import { LayoutDashboard, Rocket, Activity, Settings, LogOut, Box } from 'lucide-react';
 import { mockApi, authApi, getAuth, saveAuth, clearAuth, type AuthInfo } from './api/mocks';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import cyberLogo from './assets/cyberprotect-logo.svg';
@@ -82,23 +91,23 @@ function StatusNavLink() {
   return (
     <button
       onClick={() => navigate(target)}
-      className={`w-full flex items-center px-5 py-3 transition-colors text-sm font-medium text-left border-l-[3px]
+      className={`w-full min-h-11 flex items-center px-5 py-2.5 transition-colors text-sm font-medium text-left border-l-[3px]
         ${isActive
-          ? 'bg-[#E7F2FB] text-cyber-blue-accent border-cyber-blue-accent'
-          : 'text-cyber-gray-dark hover:bg-cyber-gray-surface hover:text-cyber-blue border-transparent'}
+          ? 'bg-[#EAF1F8] text-cyber-blue-dark border-cyber-blue-accent'
+          : 'text-cyber-gray-dark hover:bg-[#F3F6F9] hover:text-cyber-blue-dark border-transparent'}
       `}
     >
-      <Activity className={`w-4 h-4 mr-3 ${isActive ? 'text-cyber-blue-accent' : 'text-cyber-gray-light'}`} />
+      <Monitor className={`w-[18px] h-[18px] mr-3 ${isActive ? 'text-cyber-blue-accent' : 'text-cyber-gray-light'}`} strokeWidth={1.8} />
       Мой стенд
     </button>
   );
 }
 
 const navItemClass = (isActive: boolean) =>
-  `flex items-center px-5 py-3 transition-colors text-sm font-medium border-l-[3px]
+  `min-h-11 flex items-center px-5 py-2.5 transition-colors text-sm font-medium border-l-[3px]
    ${isActive
-     ? 'bg-[#E7F2FB] text-cyber-blue-accent border-cyber-blue-accent'
-     : 'text-cyber-gray-dark hover:bg-cyber-gray-surface hover:text-cyber-blue border-transparent'}`;
+     ? 'bg-[#EAF1F8] text-cyber-blue-dark border-cyber-blue-accent'
+     : 'text-cyber-gray-dark hover:bg-[#F3F6F9] hover:text-cyber-blue-dark border-transparent'}`;
 
 function CapacityBadge() {
   const [util, setUtil] = useState<number | null>(null);
@@ -193,7 +202,7 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
   return (
     <div className="h-screen w-full flex flex-col font-sans text-cyber-gray-dark overflow-hidden bg-cyber-gray-surface">
       <div className="h-1 flex-shrink-0 bg-cyber-blue-accent" />
-      <header className="bg-white border-b border-cyber-gray-border h-16 flex-shrink-0 px-4 sm:px-6 flex justify-between items-center z-30 shadow-[0_3px_16px_rgba(0,32,77,0.04)]">
+      <header className="bg-white border-b border-cyber-gray-border h-20 flex-shrink-0 px-4 sm:px-6 flex justify-between items-center z-30 shadow-[0_2px_8px_rgba(0,32,77,0.04)]">
         <div className="flex items-center gap-3 sm:gap-5 min-w-0">
           <button
             type="button"
@@ -204,19 +213,19 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
           >
             {navOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
           </button>
-          <img src={cyberLogo} alt="КИБЕРПРОТЕКТ" className="h-7 sm:h-8 w-auto max-w-[170px] sm:max-w-none select-none" />
-          <div className="h-7 w-px bg-cyber-gray-border hidden md:block" />
-          <span className="hidden xl:inline text-xs font-bold uppercase tracking-[0.14em] text-cyber-gray-light">Учебная оркестрация</span>
+          <img src={cyberLogo} alt="КИБЕРПРОТЕКТ" className="h-9 sm:h-10 w-auto max-w-[194px] sm:max-w-[215px] select-none" />
+          <div className="h-8 w-px bg-cyber-gray-border hidden md:block" />
+          <span className="hidden xl:inline text-xs font-semibold text-cyber-gray-light">Учебная оркестрация</span>
           <CapacityBadge />
         </div>
         <UserMenu auth={auth} />
       </header>
 
       <div className="flex-1 flex overflow-hidden relative">
-        <nav className="hidden lg:flex w-16 bg-cyber-blue-dark flex-shrink-0 flex-col items-center py-4 z-10">
+        <nav className="hidden lg:flex w-16 bg-cyber-blue-dark flex-shrink-0 flex-col items-center z-10">
           <div className="w-full flex flex-col items-center gap-2">
-            <div className="w-full h-14 flex items-center justify-center text-white bg-cyber-blue/70 border-l-[3px] border-cyber-blue-light transition-colors relative group" title="Оркестрация">
-              <Box className="w-5 h-5" />
+            <div className="w-full h-16 flex items-center justify-center text-white bg-cyber-blue border-l-[3px] border-cyber-blue-light" title="Киберполигон">
+              <Box className="w-5 h-5" strokeWidth={1.8} />
             </div>
           </div>
         </nav>
@@ -231,21 +240,22 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
         )}
 
         <aside className={`${navOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 absolute lg:static inset-y-0 left-0 w-[min(19rem,86vw)] lg:w-64 bg-white border-r border-cyber-gray-border flex-shrink-0 flex flex-col z-20 transition-transform duration-200 shadow-2xl lg:shadow-none`}>
-          <div className="px-5 py-6 border-b border-cyber-gray-border/70">
-            <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-cyber-blue-accent mb-1">Киберполигон</p>
-            <h2 className="text-lg font-bold text-cyber-blue-dark">Оркестрация</h2>
+          <div className="px-5 py-5 border-b border-cyber-gray-border">
+            <h2 className="text-base font-bold text-cyber-blue-dark">Киберполигон</h2>
+            <p className="text-xs text-cyber-gray-light mt-1">Управление учебными стендами</p>
           </div>
 
-          <div className="flex-1 overflow-y-auto py-3">
+          <div className="flex-1 overflow-y-auto py-4">
+            <p className="px-5 mb-2 text-[11px] font-semibold text-cyber-gray-light">Основное</p>
             {!isStudent && (
               <NavLink to="/" className={({ isActive }) => navItemClass(isActive)} end>
-                <LayoutDashboard className="w-4 h-4 mr-3" />
-                Панель управления
+                <LayoutDashboard className="w-[18px] h-[18px] mr-3" strokeWidth={1.8} />
+                Мониторинг
               </NavLink>
             )}
 
             <NavLink to="/launch" className={({ isActive }) => navItemClass(isActive)}>
-              <Rocket className="w-4 h-4 mr-3" />
+              <MonitorPlay className="w-[18px] h-[18px] mr-3" strokeWidth={1.8} />
               Запуск стенда
             </NavLink>
 
@@ -254,18 +264,14 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
             {!isStudent && (
               <>
                 <div className="mt-6 mb-2 px-5">
-                  <p className="text-[11px] text-cyber-gray-light uppercase tracking-wider font-semibold">Администрирование</p>
+                  <p className="text-[11px] text-cyber-gray-light font-semibold">Система</p>
                 </div>
                 <NavLink to="/admin" className={({ isActive }) => navItemClass(isActive)}>
-                  <Settings className="w-4 h-4 mr-3" />
-                  Стенд админа
+                  <Settings className="w-[18px] h-[18px] mr-3" strokeWidth={1.8} />
+                  Администрирование
                 </NavLink>
               </>
             )}
-          </div>
-          <div className="p-5 border-t border-cyber-gray-border bg-cyber-gray-surface/70">
-            <p className="text-[10px] uppercase tracking-[0.12em] text-cyber-gray-light">КИБЕРПРОТЕКТ</p>
-            <p className="text-xs text-cyber-blue-dark mt-1">Защищённая учебная среда</p>
           </div>
         </aside>
 
