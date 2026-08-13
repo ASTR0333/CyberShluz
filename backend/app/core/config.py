@@ -41,6 +41,9 @@ class Settings(BaseSettings):
     # before a stand is marked READY.
     VM_BOOTSTRAP_USER: str = ""
     VM_BOOTSTRAP_PASSWORD: str = ""
+    # Optional root password for legacy images where the SSH user is not in
+    # sudoers but can elevate with `su`. Falls back to VM_BOOTSTRAP_PASSWORD.
+    VM_BOOTSTRAP_ROOT_PASSWORD: str = ""
     VM_BUILD_TIMEOUT: int = 600
     SSH_BOOTSTRAP_TIMEOUT: int = 240
     DEPLOYMENT_STALE_TIMEOUT: int = 1200

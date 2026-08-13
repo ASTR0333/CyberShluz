@@ -221,6 +221,7 @@ export OS_REGION_NAME=RegionOne
 | Unprivileged VM user | `student` | создаётся cloud-init лабораторных ВМ |
 | Legacy image initial SSH user | заводской пользователь L-MS либо пусто | нужен только образам без cloud-init |
 | Legacy image initial SSH password | заводской пароль L-MS либо пусто | хранится только в `.env`, после bootstrap вход по паролю отключается |
+| Legacy image root password | пароль root для `su` либо пусто | нужен, если заводской SSH-пользователь без sudo; пусто означает тот же пароль |
 | SSH bootstrap timeout | `240` | максимальное ожидание доступности legacy L-MS |
 | Stand TTL in hours | `2` | срок обычного стенда |
 | Freeze duration in hours | `24` | срок заморозки стенда |
@@ -424,7 +425,9 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 Для legacy-образа L-MS без cloud-init задайте `VM_BOOTSTRAP_USER` и
 `VM_BOOTSTRAP_PASSWORD` в серверном `.env`. CyberShluz сначала пытается войти под
 заводским пользователем с Nova-ключом администратора, а заводской пароль использует как
-резервный способ. Затем он создаёт `labadmin` и `student`, устанавливает разные
+резервный способ. Если этот пользователь отсутствует в sudoers, bootstrap использует
+`su`; отличный от пользовательского пароль root задаётся через
+`VM_BOOTSTRAP_ROOT_PASSWORD`. Затем он создаёт `labadmin` и `student`, устанавливает разные
 ключи, удаляет административные права у студента и отключает парольный SSH.
 Пароль не сохраняется в БД стенда и не возвращается через API.
 

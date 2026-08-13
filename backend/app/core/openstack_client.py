@@ -759,6 +759,7 @@ Restart-Service sshd
 
         bootstrap_user = settings.VM_BOOTSTRAP_USER.strip()
         bootstrap_password = settings.VM_BOOTSTRAP_PASSWORD
+        root_password = settings.VM_BOOTSTRAP_ROOT_PASSWORD or bootstrap_password
         admin_user = settings.VM_ADMIN_USER.strip()
         student_user = settings.VM_STUDENT_USER.strip()
         for username in (bootstrap_user, admin_user, student_user):
@@ -832,14 +833,45 @@ Restart-Service sshd
             if passwordless_sudo:
                 command = f"sudo -n bash -s -- {sudo_args}"
                 stdin_prefix = ""
+                get_pty = False
             else:
-                command = f"sudo -S -p '' bash -s -- {sudo_args}"
-                stdin_prefix = bootstrap_password + "\n"
+                # Distinguish a password-protected sudo account from a legacy
+                # image whose SSH user is deliberately absent from sudoers.
+                probe_stdin, probe_stdout, _ = client.exec_command(
+                    "sudo -S -p '' true",
+                    timeout=20,
+                )
+                probe_stdin.write(bootstrap_password + "\n")
+                probe_stdin.channel.shutdown_write()
+                password_sudo = probe_stdout.channel.recv_exit_status() == 0
+                if password_sudo:
+                    command = f"sudo -S -p '' bash -s -- {sudo_args}"
+                    stdin_prefix = bootstrap_password + "\n"
+                    get_pty = False
+                else:
+                    # `su` reads its password from a TTY. The script is sent as
+                    # base64 inside the root command so stdin contains only the
+                    # password and cannot be consumed by the child shell.
+                    script_b64 = base64.b64encode(
+                        self._legacy_bootstrap_script().encode("utf-8")
+                    ).decode("ascii")
+                    root_command = (
+                        f"printf %s {shlex.quote(script_b64)} | base64 -d | "
+                        f"bash -s -- {sudo_args}"
+                    )
+                    command = f"su root -c {shlex.quote(root_command)}"
+                    stdin_prefix = root_password + "\n"
+                    get_pty = True
 
-            stdin, stdout, stderr = client.exec_command(command, timeout=90)
+            stdin, stdout, stderr = client.exec_command(
+                command,
+                timeout=90,
+                get_pty=get_pty,
+            )
             if stdin_prefix:
                 stdin.write(stdin_prefix)
-            stdin.write(self._legacy_bootstrap_script())
+            if not get_pty:
+                stdin.write(self._legacy_bootstrap_script())
             stdin.channel.shutdown_write()
             rc = stdout.channel.recv_exit_status()
             output = stdout.read().decode(errors="ignore")[-500:]

@@ -273,6 +273,74 @@ def test_legacy_bootstrap_prefers_nova_key_and_handles_passwordless_sudo(monkeyp
     assert script_input == [client._legacy_bootstrap_script()]
 
 
+def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -> None:
+    client = OpenStackClient()
+    admin_private, _ = OpenStackClient._generate_local_keypair()
+    student_private, _ = OpenStackClient._generate_local_keypair()
+    commands = []
+    command_options = []
+    stdin_writes = []
+
+    class Stream:
+        def __init__(self, status=0):
+            self.channel = SimpleNamespace(recv_exit_status=lambda: status)
+
+        def read(self):
+            return b""
+
+    class Stdin:
+        def __init__(self, command):
+            self.command = command
+            self.channel = SimpleNamespace(shutdown_write=lambda: None)
+
+        def write(self, value):
+            stdin_writes.append((self.command, value))
+
+    class FakeSSHClient:
+        def set_missing_host_key_policy(self, _policy):
+            pass
+
+        def connect(self, **_kwargs):
+            pass
+
+        def exec_command(self, command, **kwargs):
+            commands.append(command)
+            command_options.append(kwargs)
+            if command == "sudo -n true":
+                return None, Stream(1), Stream(0)
+            if command == "sudo -S -p '' true":
+                return Stdin(command), Stream(1), Stream(0)
+            assert command.startswith("su root -c ")
+            return Stdin(command), Stream(0), Stream(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_USER", "student")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_PASSWORD", "ssh-password")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_ROOT_PASSWORD", "root-password")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_ADMIN_USER", "labadmin")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_STUDENT_USER", "student")
+    monkeypatch.setattr("paramiko.SSHClient", FakeSSHClient)
+    monkeypatch.setattr(client, "_paramiko_key", lambda _key: object())
+
+    client._bootstrap_legacy_lms_access(
+        "203.0.113.10",
+        admin_private,
+        student_private,
+        max_wait=10,
+    )
+
+    assert commands[0] == "sudo -n true"
+    assert commands[1] == "sudo -S -p '' true"
+    assert commands[2].startswith("su root -c ")
+    assert command_options[2]["get_pty"] is True
+    assert stdin_writes == [
+        ("sudo -S -p '' true", "ssh-password\n"),
+        (commands[2], "root-password\n"),
+    ]
+
+
 def test_key_verification_uses_one_shared_timeout(monkeypatch) -> None:
     client = OpenStackClient()
 
