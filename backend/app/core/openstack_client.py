@@ -1022,6 +1022,11 @@ Restart-Service sshd
     @staticmethod
     def _legacy_bootstrap_script() -> str:
         return r'''set -Eeuo pipefail
+# `su root -c` preserves the SSH user's environment on some legacy images.
+# Keep the standard administrative directories ahead of that inherited PATH:
+# account-management tools and sshd commonly live in /usr/sbin or /sbin.
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"
+
 admin_user="$1"
 student_user="$2"
 admin_key="$(printf '%s' "$3" | base64 -d)"

@@ -47,6 +47,9 @@ def test_windows_cloudbase_init_uses_keys_and_standard_student() -> None:
 def test_legacy_bootstrap_creates_separate_users_and_disables_passwords() -> None:
     script = OpenStackClient._legacy_bootstrap_script()
 
+    path_setup = 'export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin${PATH:+:$PATH}"'
+    assert path_setup in script
+    assert script.index(path_setup) < script.index('ensure_user "$admin_user"')
     assert 'ensure_user "$admin_user"' in script
     assert 'ensure_user "$student_user"' in script
     assert 'install_key "$admin_user" "$admin_key"' in script
