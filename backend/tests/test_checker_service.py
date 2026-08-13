@@ -11,8 +11,8 @@ def test_inventory_uses_lms_as_bastion(tmp_path: Path) -> None:
     inventory_path = CheckerService._write_inventory(
         {
             "L-MS": {"address": "203.0.113.10"},
-            "L-NFS": {"address": "10.0.0.70", "proxy_jump": "203.0.113.10"},
-            "L-PGSQL": {"address": "10.0.0.55", "proxy_jump": "203.0.113.10"},
+            "L-NFS": {"address": "10.10.0.70", "proxy_jump": "203.0.113.10"},
+            "L-PGSQL": {"address": "10.10.0.55", "proxy_jump": "203.0.113.10"},
         },
         "labadmin",
         str(key_path),
@@ -20,7 +20,7 @@ def test_inventory_uses_lms_as_bastion(tmp_path: Path) -> None:
     try:
         inventory = json.loads(Path(inventory_path).read_text(encoding="utf-8"))
         nfs = inventory["all"]["children"]["nfs"]["hosts"]["l-nfs"]
-        assert nfs["ansible_host"] == "10.0.0.70"
+        assert nfs["ansible_host"] == "10.10.0.70"
         assert "ProxyJump=labadmin@203.0.113.10" in nfs["ansible_ssh_common_args"]
         assert nfs["expected_hostname"] == "l-nfs.cyberprotect.test"
     finally:

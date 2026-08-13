@@ -102,7 +102,7 @@ def deploy_stand_task(
         deployment = (
             DeploymentConfig.model_validate(deployment_config)
             if deployment_config
-            else default_lab3_config(settings.OS_NETWORK_NAME or "public")
+            else default_lab3_config(settings.OS_NETWORK_NAME or "Public")
         )
 
         admin_key_name = f"key-stand{stand_id}-admin"

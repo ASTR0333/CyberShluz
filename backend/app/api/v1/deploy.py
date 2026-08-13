@@ -25,7 +25,7 @@ router = APIRouter()
 )
 async def deployment_options(user=Depends(require_student)):
     del user
-    default = default_lab3_config(settings.OS_NETWORK_NAME or "public")
+    default = default_lab3_config(settings.OS_NETWORK_NAME or "Public")
     try:
         catalog = OpenStackClient().get_deployment_catalog()
         return DeploymentOptionsResponse(default=default, **catalog)
@@ -64,7 +64,7 @@ async def deploy(
     auth_user_id = int(user.get("user_id", 0))
     request.user_id = auth_username
     request.role = auth_role
-    deployment = request.deployment or default_lab3_config(settings.OS_NETWORK_NAME or "public")
+    deployment = request.deployment or default_lab3_config(settings.OS_NETWORK_NAME or "Public")
 
      
     if auth_role == UserRole.STUDENT:

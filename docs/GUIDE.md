@@ -24,7 +24,7 @@ gateway.example.ru  -> floating IP ВМ cybershluz
 ## 2. Что необходимо до начала
 
 - проект и учётная запись в КИ с правами создавать сети, подсети, маршрутизаторы, security groups, floating IP, keypair и ВМ;
-- внешняя сеть КИ, обычно называющаяся `public`;
+- внешняя сеть КИ `Public`;
 - свободные квоты для двух постоянных ВМ и одновременно работающих лабораторных стендов;
 - два DNS-имени и возможность создать для них A-записи;
 - административный компьютер с `ssh-keygen`;
@@ -53,7 +53,7 @@ gateway.example.ru  -> floating IP ВМ cybershluz
 
 Создайте виртуальный маршрутизатор и настройте:
 
-1. внешний шлюз — сеть `public`;
+1. внешний шлюз — сеть `Public`;
 2. SNAT — включён;
 3. внутренний интерфейс — подсеть сети `local`.
 
@@ -119,7 +119,7 @@ cat ~/.ssh/cybershluz-admin.pub
 - сеть: `local`;
 - security group: `service-vm-sg`;
 - SSH key: `cybershluz-admin`;
-- floating IP: отдельный адрес из `public`;
+- floating IP: отдельный адрес из `Public`;
 - пользовательские данные: содержимое `infra/cloud-init/service-vm-hardening.yaml`.
 
 ### 4.3. Создание ВМ `cybershluz`
@@ -216,7 +216,7 @@ export OS_REGION_NAME=RegionOne
 | OpenStack user domain | значение `OS_USER_DOMAIN_NAME` | OpenRC, в текущем стенде обычно `Hackhaton` |
 | OpenStack project domain | значение `OS_PROJECT_DOMAIN_NAME` | OpenRC, в текущем стенде обычно `Hackhaton` |
 | OpenStack region | значение `OS_REGION_NAME`, обычно `RegionOne` | OpenRC |
-| Default external network | `public` | имя внешней сети КИ; не `local` |
+| Default external network | `Public` | имя внешней сети КИ; не `local` |
 | Administrative VM user | `labadmin` | создаётся cloud-init лабораторных ВМ |
 | Unprivileged VM user | `student` | создаётся cloud-init лабораторных ВМ |
 | Legacy image initial SSH user | заводской пользователь L-MS либо пусто | нужен только образам без cloud-init |
@@ -226,7 +226,7 @@ export OS_REGION_NAME=RegionOne
 | Freeze duration in hours | `24` | срок заморозки стенда |
 | Maximum projected utilization | `0.9` | предел 90% квоты |
 
-`OS_NETWORK_NAME=public` означает внешнюю сеть для маршрутизаторов и floating IP. Сеть `local` используется постоянными ВМ и не должна указываться в этом поле.
+`OS_NETWORK_NAME=Public` означает внешнюю сеть для маршрутизаторов и floating IP. Сеть `local` используется постоянными ВМ и не должна указываться в этом поле.
 
 Скрипт автоматически генерирует `DB_PASSWORD`, `JWT_SECRET_KEY` и `MOODLE_SHARED_SECRET`, сохраняет `.env` с правами `600`. Не коммитьте `.env` в Git.
 
@@ -388,11 +388,11 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 
 | Роль | Образ в КИ | UUID | Flavor | IP по умолчанию |
 |---|---|---|---|---|
-| L-MS | `2_TMP_L-MS_Debian11.11_09.2025.qcow2` | `521b868a-ac28-4eb9-9f77-562df86f18db` | `small` | `10.0.0.10` |
-| L-NFS | `2_TMP_L-NFS_CentOS7_08.2025.qcow2` | `3ae20dd5-ae96-4c0b-b8bd-7e3cb225191b` | `tiny` | `10.0.0.70` |
-| L-PGSQL | `2_TMP_L-PGSQL_CentOS7_08.2025.qcow2` | `dd37703a-8af3-4619-bbd3-c6b69d5e7e8d` | `tiny` | `10.0.0.55` |
-| W-DC | `2_TMP_W-DC_WinSrvStd19_10.2025.qcow2` | `6ac5ebae-979e-48f2-bc4f-5d0a9a701650` | `medium` | `10.0.0.5` |
-| V-HYPERV | `2_TMP_V-HYPERV_WinSrvStd19_10.2025.qcow2` | `c3947f72-fe13-489a-8073-676ffdf9f859` | `large` | `10.0.0.65` |
+| L-MS | `2_TMP_L-MS_Debian11.11_09.2025.qcow2` | `521b868a-ac28-4eb9-9f77-562df86f18db` | `small` | `10.10.0.10` |
+| L-NFS | `2_TMP_L-NFS_CentOS7_08.2025.qcow2` | `3ae20dd5-ae96-4c0b-b8bd-7e3cb225191b` | `tiny` | `10.10.0.70` |
+| L-PGSQL | `2_TMP_L-PGSQL_CentOS7_08.2025.qcow2` | `dd37703a-8af3-4619-bbd3-c6b69d5e7e8d` | `tiny` | `10.10.0.55` |
+| W-DC | `2_TMP_W-DC_WinSrvStd19_10.2025.qcow2` | `6ac5ebae-979e-48f2-bc4f-5d0a9a701650` | `medium` | `10.10.0.5` |
+| V-HYPERV | `2_TMP_V-HYPERV_WinSrvStd19_10.2025.qcow2` | `c3947f72-fe13-489a-8073-676ffdf9f859` | `large` | `10.10.0.65` |
 
 Перед боевым запуском проверьте:
 
@@ -400,7 +400,7 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 - Windows-образы содержат Cloudbase-Init и OpenSSH Server;
 - имена flavor существуют именно в выбранном проекте;
 - квоты проекта позволяют создать выбранные ресурсы;
-- внешняя сеть называется `public` либо пользователь выбрал правильное имя в форме.
+- внешняя сеть называется `Public` либо пользователь выбрал правильное имя в форме.
 
 В форме можно изменить CIDR, gateway, DHCP pool, DNS, external network, образы, выбрать flavor из списка OpenStack и задать статические IP. DHCP pool не должен пересекаться со статическими IP. L-MS обязательна, поскольку служит точкой входа и bastion для остальных Linux-ВМ.
 
@@ -420,8 +420,9 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 - PostgreSQL, NFS и RDP не публикуются напрямую в Интернет.
 
 Для legacy-образа L-MS без cloud-init задайте `VM_BOOTSTRAP_USER` и
-`VM_BOOTSTRAP_PASSWORD` в серверном `.env`. CyberShluz однократно входит под
-заводской учётной записью, создаёт `labadmin` и `student`, устанавливает разные
+`VM_BOOTSTRAP_PASSWORD` в серверном `.env`. CyberShluz сначала пытается войти под
+заводским пользователем с Nova-ключом администратора, а заводской пароль использует как
+резервный способ. Затем он создаёт `labadmin` и `student`, устанавливает разные
 ключи, удаляет административные права у студента и отключает парольный SSH.
 Пароль не сохраняется в БД стенда и не возвращается через API.
 
@@ -526,7 +527,7 @@ resolvectl status
 resolvectl query archive.ubuntu.com
 ```
 
-Если IP доступен, исправьте DNS подсети `local`. Если IP недоступен, проверьте default route, интерфейс маршрутизатора, внешний gateway `public`, SNAT и исходящие правила security group.
+Если IP доступен, исправьте DNS подсети `local`. Если IP недоступен, проверьте default route, интерфейс маршрутизатора, внешний gateway `Public`, SNAT и исходящие правила security group.
 
 ### `Docker daemon is unavailable`
 
@@ -555,7 +556,7 @@ groups
 
 ## 15. Финальный чек-лист
 
-- [ ] `local` подключена к маршрутизатору, внешний gateway — `public`, SNAT включён.
+- [ ] `local` подключена к маршрутизатору, внешний gateway — `Public`, SNAT включён.
 - [ ] На обеих Ubuntu-ВМ работают маршрут и DNS.
 - [ ] SSH по паролю и root отключены, вход по ключу проверен.
 - [ ] У Moodle и CyberShluz есть разные floating IP и DNS A-записи.
@@ -563,7 +564,7 @@ groups
 - [ ] `docker compose ps` показывает healthy/running сервисы.
 - [ ] `/health` CyberShluz возвращает успешный ответ.
 - [ ] OpenStack credentials соответствуют нужному проекту и домену.
-- [ ] В `.env` внешняя сеть указана как `public`.
+- [ ] В `.env` внешняя сеть указана как `Public`.
 - [ ] LTI Client ID, Deployment ID, issuer и endpoints перенесены из Moodle без ошибок.
 - [ ] Тестовый студент может открыть внешнюю активность и создать стенд.
 - [ ] Студент не имеет `sudo`, root/password SSH не работают.

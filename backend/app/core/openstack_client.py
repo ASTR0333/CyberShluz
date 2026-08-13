@@ -223,10 +223,10 @@ class OpenStackClient:
 
     def _ensure_stand_network(self, conn, stand_id: str, deployment: DeploymentConfig) -> dict:
         """
-        Создаёт ИЗОЛИРОВАННУЮ сеть стенда: своя Neutron-сеть + подсеть 10.0.0.0/24 +
-        роутер с внешним шлюзом в `public`. Это даёт каждому студенту собственный
+        Создаёт ИЗОЛИРОВАННУЮ сеть стенда: своя Neutron-сеть + подсеть 10.10.0.0/24 +
+        роутер с внешним шлюзом в `Public`. Это даёт каждому студенту собственный
         L2/L3-сегмент (модель изоляции из ТЗ), а фиксированные IP топологии
-        (10.0.0.10/55/70/...) больше не конфликтуют между параллельными стендами.
+        (10.10.0.10/55/70/...) больше не конфликтуют между параллельными стендами.
         Идемпотентно: повторный вызов переиспользует уже созданные объекты.
         """
         net_name = f"stand{stand_id}-net"
@@ -708,7 +708,7 @@ Restart-Service sshd
             except Exception as key_error:
                 print(f"[OpenStack] Initial key-only SSH probe failed: {key_error}")
 
-            progress(f"Ожидание парольного SSH на L-MS (до {timeout} с)...")
+            progress(f"Ожидание резервного SSH bootstrap на L-MS (до {timeout} с)...")
             self._bootstrap_legacy_lms_access(
                 ip,
                 admin_private_key,
@@ -753,7 +753,7 @@ Restart-Service sshd
         max_wait: int,
         progress_cb=None,
     ) -> None:
-        """Enter once with the image password, install keys, then disable passwords."""
+        """Enter with the Nova key or image password, install keys, then harden SSH."""
         import paramiko
         import socket
 
@@ -774,54 +774,71 @@ Restart-Service sshd
 
         started = time.monotonic()
         deadline = started + max_wait
-        last_error: Exception | None = None
+        last_errors: dict[str, Exception] = {}
         client = None
+        connected_with = ""
+        bootstrap_pkey = self._paramiko_key(admin_private_key)
+        auth_methods = [
+            ("Nova-injected admin key", {"pkey": bootstrap_pkey}),
+            ("legacy password", {"password": bootstrap_password}),
+        ]
         while time.monotonic() < deadline:
             if progress_cb:
                 elapsed = min(max_wait, int(time.monotonic() - started))
-                progress_cb(f"Ожидание парольного SSH на L-MS: {elapsed}/{max_wait} с")
-            candidate = paramiko.SSHClient()
-            candidate.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            try:
-                remaining = max(1, deadline - time.monotonic())
-                candidate.connect(
-                    hostname=ip,
-                    username=bootstrap_user,
-                    password=bootstrap_password,
-                    timeout=min(10, remaining),
-                    banner_timeout=min(15, remaining),
-                    auth_timeout=min(15, remaining),
-                    look_for_keys=False,
-                    allow_agent=False,
-                )
-                client = candidate
+                progress_cb(f"Ожидание SSH bootstrap на L-MS: {elapsed}/{max_wait} с")
+            for auth_name, auth_kwargs in auth_methods:
+                candidate = paramiko.SSHClient()
+                candidate.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+                try:
+                    remaining = max(1, deadline - time.monotonic())
+                    candidate.connect(
+                        hostname=ip,
+                        username=bootstrap_user,
+                        timeout=min(10, remaining),
+                        banner_timeout=min(15, remaining),
+                        auth_timeout=min(15, remaining),
+                        look_for_keys=False,
+                        allow_agent=False,
+                        **auth_kwargs,
+                    )
+                    client = candidate
+                    connected_with = auth_name
+                    break
+                except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as exc:
+                    last_errors[auth_name] = exc
+                    candidate.close()
+            if client is not None:
                 break
-            except paramiko.AuthenticationException as exc:
-                candidate.close()
-                raise SSHBootstrapError(
-                    f"legacy bootstrap credentials were rejected for {bootstrap_user}@{ip}"
-                ) from exc
-            except (paramiko.SSHException, socket.error, EOFError, TimeoutError) as exc:
-                last_error = exc
-                candidate.close()
-                remaining = deadline - time.monotonic()
-                if remaining > 0:
-                    time.sleep(min(5, remaining))
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(5, remaining))
 
         if client is None:
+            details = "; ".join(f"{name}: {error}" for name, error in last_errors.items())
             raise SSHBootstrapError(
-                f"legacy password SSH to {bootstrap_user}@{ip} was unavailable for {max_wait}s: {last_error}"
+                f"SSH bootstrap to {bootstrap_user}@{ip} was unavailable for {max_wait}s: "
+                f"{details or 'no connection attempt completed'}"
             )
 
-        command = "sudo -S -p '' bash -s -- {} {} {} {}".format(
-            shlex.quote(admin_user),
-            shlex.quote(student_user),
-            shlex.quote(admin_key_b64),
-            shlex.quote(student_key_b64),
-        )
         try:
+            _, sudo_stdout, _ = client.exec_command("sudo -n true", timeout=20)
+            passwordless_sudo = sudo_stdout.channel.recv_exit_status() == 0
+            sudo_args = "{} {} {} {}".format(
+                shlex.quote(admin_user),
+                shlex.quote(student_user),
+                shlex.quote(admin_key_b64),
+                shlex.quote(student_key_b64),
+            )
+            if passwordless_sudo:
+                command = f"sudo -n bash -s -- {sudo_args}"
+                stdin_prefix = ""
+            else:
+                command = f"sudo -S -p '' bash -s -- {sudo_args}"
+                stdin_prefix = bootstrap_password + "\n"
+
             stdin, stdout, stderr = client.exec_command(command, timeout=90)
-            stdin.write(bootstrap_password + "\n")
+            if stdin_prefix:
+                stdin.write(stdin_prefix)
             stdin.write(self._legacy_bootstrap_script())
             stdin.channel.shutdown_write()
             rc = stdout.channel.recv_exit_status()
@@ -834,7 +851,10 @@ Restart-Service sshd
         finally:
             client.close()
 
-        print(f"[OpenStack] Legacy L-MS @ {ip} hardened; password SSH disabled")
+        print(
+            f"[OpenStack] Legacy L-MS @ {ip} hardened via {connected_with}; "
+            "password SSH disabled"
+        )
 
     @staticmethod
     def _legacy_bootstrap_script() -> str:
@@ -1028,7 +1048,7 @@ printf 'kibershluz-bootstrap-ok\n'
             pass
         return sg
 
-    def _assign_floating_ip(self, conn, server_id: str, external_network: str = "public") -> str:
+    def _assign_floating_ip(self, conn, server_id: str, external_network: str = "Public") -> str:
         server = conn.compute.get_server(server_id)
         if server.addresses:
             for net_addrs in server.addresses.values():

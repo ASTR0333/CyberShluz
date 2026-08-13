@@ -30,7 +30,7 @@ class Settings(BaseSettings):
     OS_USER_DOMAIN_NAME: str = "Default"
     OS_PROJECT_DOMAIN_NAME: str = "Default"
     OS_REGION_NAME: str = "RegionOne"
-    OS_NETWORK_NAME: str = "public"
+    OS_NETWORK_NAME: str = "Public"
 
      
      

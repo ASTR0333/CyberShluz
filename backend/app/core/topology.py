@@ -10,12 +10,12 @@ VMRole = Literal["L-MS", "L-NFS", "L-PGSQL", "W-DC", "V-HYPERV"]
 
 
 class NetworkDeploymentSpec(BaseModel):
-    cidr: str = "10.0.0.0/24"
-    gateway: str = "10.0.0.1"
-    dhcp_start: str = "10.0.0.100"
-    dhcp_end: str = "10.0.0.200"
+    cidr: str = "10.10.0.0/24"
+    gateway: str = "10.10.0.1"
+    dhcp_start: str = "10.10.0.100"
+    dhcp_end: str = "10.10.0.200"
     dns_nameservers: list[str] = Field(default_factory=lambda: ["8.8.8.8", "1.1.1.1"])
-    external_network: str = "public"
+    external_network: str = "Public"
 
     @model_validator(mode="after")
     def validate_addresses(self) -> "NetworkDeploymentSpec":
@@ -106,7 +106,7 @@ class DeploymentConfig(BaseModel):
         }
 
 
-def default_lab3_config(external_network: str = "public") -> DeploymentConfig:
+def default_lab3_config(external_network: str = "Public") -> DeploymentConfig:
     """Defaults from the Lab 3 topology document."""
     return DeploymentConfig(
         network=NetworkDeploymentSpec(external_network=external_network),
@@ -115,31 +115,31 @@ def default_lab3_config(external_network: str = "public") -> DeploymentConfig:
                 role="L-MS",
                 image="2_TMP_L-MS_Debian11.11_09.2025.qcow2",
                 flavor="small",
-                ip="10.0.0.10",
+                ip="10.10.0.10",
             ),
             VMDeploymentSpec(
                 role="L-NFS",
                 image="2_TMP_L-NFS_CentOS7_08.2025.qcow2",
                 flavor="tiny",
-                ip="10.0.0.70",
+                ip="10.10.0.70",
             ),
             VMDeploymentSpec(
                 role="L-PGSQL",
                 image="2_TMP_L-PGSQL_CentOS7_08.2025.qcow2",
                 flavor="tiny",
-                ip="10.0.0.55",
+                ip="10.10.0.55",
             ),
             VMDeploymentSpec(
                 role="W-DC",
                 image="2_TMP_W-DC_WinSrvStd19_10.2025.qcow2",
                 flavor="medium",
-                ip="10.0.0.5",
+                ip="10.10.0.5",
             ),
             VMDeploymentSpec(
                 role="V-HYPERV",
                 image="2_TMP_V-HYPERV_WinSrvStd19_10.2025.qcow2",
                 flavor="large",
-                ip="10.0.0.65",
+                ip="10.10.0.65",
             ),
         ]
     )

@@ -277,18 +277,19 @@ stand.status  = StandStatusEnum.DEPLOYING</pre>
 
     <h3>Модель изоляции (Neutron)</h3>
     <p>На каждый стенд создаётся <b>собственный изолированный L2/L3-сегмент</b> — отдельная сеть Neutron,
-      подсеть <code>10.0.0.0/24</code> и маршрутизатор с внешним шлюзом в публичную сеть. Это в точности
+      подсеть <code>10.10.0.0/24</code> и маршрутизатор с внешним шлюзом в сеть <code>Public</code>. Это в точности
       модель изоляции из ТЗ («собственные изолированные сети, объединённые с публичной сетью через
       маршрутизатор») и устраняет коллизию фиксированных IP топологии между параллельными стендами.</p>
 <pre><span class="c"># app/core/openstack_client.py — _ensure_stand_network()</span>
 network = conn.network.create_network(name=f"stand{id}-net")
-subnet  = conn.network.create_subnet(network_id=network.id, cidr="10.0.0.0/24",
-                                      gateway_ip="10.0.0.1", dns_nameservers=["8.8.8.8"])
+subnet  = conn.network.create_subnet(network_id=network.id, cidr="10.10.0.0/24",
+                                      gateway_ip="10.10.0.1", dns_nameservers=["8.8.8.8"])
+external = conn.network.find_network("Public")
 router  = conn.network.create_router(name=f"stand{id}-router",
-                                      external_gateway_info={"network_id": public.id})
+                                      external_gateway_info={"network_id": external.id})
 conn.network.add_interface_to_router(router, subnet_id=subnet.id)
 <span class="c"># Floating IP выдаётся только L-MS — единственная точка входа стенда;</span>
-<span class="c"># остальные ВМ доступны через неё по внутренней сети 10.0.0.0/24.</span></pre>
+<span class="c"># остальные ВМ доступны через неё по внутренней сети 10.10.0.0/24.</span></pre>
     <p>При очистке сеть, подсеть и маршрутизатор сносятся (<code>_teardown_stand_network</code>),
       возвращая ресурсы Neutron в проект.</p>
 

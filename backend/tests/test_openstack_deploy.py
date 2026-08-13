@@ -48,7 +48,7 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
             return SimpleNamespace(
                 id="server-id",
                 status="ACTIVE",
-                addresses={"stand-net": [{"OS-EXT-IPS:type": "fixed", "addr": "10.0.0.10"}]}
+                addresses={"stand-net": [{"OS-EXT-IPS:type": "fixed", "addr": "10.10.0.10"}]}
             )
 
     class FakeNetwork:
@@ -61,7 +61,7 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
     monkeypatch.setattr(
         client,
         "_ensure_stand_network",
-        lambda *_args: {"network_id": "network-id", "external_network": "public"},
+        lambda *_args: {"network_id": "network-id", "external_network": "Public"},
     )
     monkeypatch.setattr(
         client,
@@ -131,7 +131,7 @@ def test_all_servers_share_one_build_deadline(monkeypatch) -> None:
     monkeypatch.setattr(
         client,
         "_ensure_stand_network",
-        lambda *_args: {"network_id": "network-id", "external_network": "public"},
+        lambda *_args: {"network_id": "network-id", "external_network": "Public"},
     )
     monkeypatch.setattr(client, "_ensure_security_group", lambda *_args: SimpleNamespace(name="stand1-sg"))
     monkeypatch.setattr("app.core.openstack_client.settings.VM_BUILD_TIMEOUT", 10)
@@ -213,6 +213,64 @@ def test_legacy_access_falls_back_to_password_bootstrap(monkeypatch) -> None:
     assert verification_attempts[0][1]["max_wait"] == 15
     assert verification_attempts[1][1]["max_wait"] == 60
     assert bootstrap_calls[0][1]["max_wait"] == 90
+
+
+def test_legacy_bootstrap_prefers_nova_key_and_handles_passwordless_sudo(monkeypatch) -> None:
+    client = OpenStackClient()
+    admin_private, _ = OpenStackClient._generate_local_keypair()
+    student_private, _ = OpenStackClient._generate_local_keypair()
+    connect_calls = []
+    commands = []
+    script_input = []
+
+    class Stream:
+        def __init__(self, status=0):
+            self.channel = SimpleNamespace(recv_exit_status=lambda: status)
+
+        def read(self):
+            return b""
+
+    class Stdin:
+        def __init__(self):
+            self.channel = SimpleNamespace(shutdown_write=lambda: None)
+
+        def write(self, value):
+            script_input.append(value)
+
+    class FakeSSHClient:
+        def set_missing_host_key_policy(self, _policy):
+            pass
+
+        def connect(self, **kwargs):
+            connect_calls.append(kwargs)
+
+        def exec_command(self, command, **_kwargs):
+            commands.append(command)
+            if command == "sudo -n true":
+                return None, Stream(0), Stream(0)
+            return Stdin(), Stream(0), Stream(0)
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_USER", "student")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_PASSWORD", "rejected-password")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_ADMIN_USER", "labadmin")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_STUDENT_USER", "student")
+    monkeypatch.setattr("paramiko.SSHClient", FakeSSHClient)
+    monkeypatch.setattr(client, "_paramiko_key", lambda _key: object())
+
+    client._bootstrap_legacy_lms_access(
+        "203.0.113.10",
+        admin_private,
+        student_private,
+        max_wait=10,
+    )
+
+    assert "pkey" in connect_calls[0]
+    assert "password" not in connect_calls[0]
+    assert commands[1].startswith("sudo -n bash -s --")
+    assert script_input == [client._legacy_bootstrap_script()]
 
 
 def test_key_verification_uses_one_shared_timeout(monkeypatch) -> None:

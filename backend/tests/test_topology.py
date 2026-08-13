@@ -11,8 +11,13 @@ def test_default_topology_matches_lab_document() -> None:
     assert by_role["L-MS"] == {
         "image": "2_TMP_L-MS_Debian11.11_09.2025.qcow2",
         "flavor": "small",
-        "ip": "10.0.0.10",
+        "ip": "10.10.0.10",
     }
+    assert config.network.cidr == "10.10.0.0/24"
+    assert config.network.gateway == "10.10.0.1"
+    assert config.network.dhcp_start == "10.10.0.100"
+    assert config.network.dhcp_end == "10.10.0.200"
+    assert config.network.external_network == "Public"
     assert by_role["L-NFS"]["flavor"] == "tiny"
     assert by_role["L-PGSQL"]["flavor"] == "tiny"
     assert by_role["W-DC"]["flavor"] == "medium"
@@ -26,7 +31,7 @@ def test_default_topology_matches_lab_document() -> None:
 
 def test_vm_address_cannot_overlap_dhcp_pool() -> None:
     payload = default_lab3_config().model_dump()
-    payload["vms"][0]["ip"] = "10.0.0.150"
+    payload["vms"][0]["ip"] = "10.10.0.150"
 
     with pytest.raises(ValidationError, match="DHCP allocation pool"):
         DeploymentConfig.model_validate(payload)
