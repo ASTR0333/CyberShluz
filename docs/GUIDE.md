@@ -239,6 +239,8 @@ docker compose --project-name cybershluz logs --tail=100 backend celery_worker
 ```
 
 Если выбран `HOST_PORT=8080`, замените `80` на `8080`. API-документация доступна по `/docs`.
+Скрипт развёртывания завершится успешно только после проверки backend и frontend через
+`nginx-proxy`; при пересоздании контейнеров proxy автоматически обновляет их Docker DNS-адреса.
 
 ## 6. Публикация CyberShluz по HTTPS
 

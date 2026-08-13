@@ -171,9 +171,14 @@ fi
 
 compose up -d --build --remove-orphans
 
+# Re-read Docker DNS after application containers have been replaced. This is
+# also required once when upgrading from the old bind-mounted proxy config.
+compose restart nginx-proxy
+
 for attempt in $(seq 1 30); do
-    if compose exec -T backend curl -fsS http://localhost:8000/health >/dev/null 2>&1; then
-        host_port="$(grep -E '^HOST_PORT=' "${ENV_FILE}" | tail -1 | cut -d= -f2-)"
+    if compose exec -T nginx-proxy wget -q -O /dev/null http://127.0.0.1/health >/dev/null 2>&1 &&
+       compose exec -T nginx-proxy wget -q -O /dev/null http://127.0.0.1/ >/dev/null 2>&1; then
+        host_port="$(grep -E '^HOST_PORT=' "${ENV_FILE}" | tail -1 | cut -d= -f2- || true)"
         echo "Deployment is healthy: http://localhost:${host_port:-80}/"
         [[ "${SHOW_LOGS}" -eq 1 ]] && compose logs --tail=200
         exit 0
@@ -182,6 +187,6 @@ for attempt in $(seq 1 30); do
 done
 
 compose ps
-compose logs --tail=150 backend celery_worker nginx-proxy
-echo "Backend did not become healthy within 60 seconds." >&2
+compose logs --tail=150 backend frontend celery_worker nginx-proxy
+echo "Application did not become healthy through nginx-proxy within 60 seconds." >&2
 exit 1
