@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.core.topology import DeploymentConfig, default_lab3_config
+from app.core.topology import DeploymentConfig, default_lab3_config, lab3_config_for_stand
 
 
 def test_default_topology_matches_lab_document() -> None:
@@ -51,3 +51,23 @@ def test_lms_is_required_for_access() -> None:
 
     with pytest.raises(ValidationError, match="L-MS is required"):
         DeploymentConfig.model_validate(payload)
+
+
+def test_each_stand_gets_a_unique_second_octet() -> None:
+    first = lab3_config_for_stand(1)
+    second = lab3_config_for_stand(2)
+    tenth = lab3_config_for_stand(10)
+
+    assert first.network.cidr == "10.10.0.0/24"
+    assert first.enabled_topology()["L-MS"]["ip"] == "10.10.0.10"
+    assert second.network.cidr == "10.11.0.0/24"
+    assert second.network.gateway == "10.11.0.1"
+    assert second.network.dhcp_start == "10.11.0.100"
+    assert second.enabled_topology()["L-NFS"]["ip"] == "10.11.0.70"
+    assert tenth.network.cidr == "10.19.0.0/24"
+
+
+@pytest.mark.parametrize("stand_id", [0, -1, 247])
+def test_stand_subnet_rejects_ids_that_cannot_be_mapped(stand_id: int) -> None:
+    with pytest.raises(ValueError, match="unique IPv4 second octet"):
+        lab3_config_for_stand(stand_id)

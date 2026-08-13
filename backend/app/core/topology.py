@@ -143,3 +143,39 @@ def default_lab3_config(external_network: str = "Public") -> DeploymentConfig:
             ),
         ]
     )
+
+
+def lab3_config_for_stand(stand_id: int, external_network: str = "Public") -> DeploymentConfig:
+    """Return the fixed Lab 3 topology in a subnet unique to a pool stand.
+
+    Stand 1 keeps the topology document's 10.10.0.0/24 network. Each following
+    pool stand increments the second octet, so concurrently active stands do
+    not reuse the same fixed addresses (stand 2 -> 10.11.0.0/24, etc.).
+    """
+    if isinstance(stand_id, bool) or not isinstance(stand_id, int):
+        raise ValueError("stand_id must be an integer")
+
+    second_octet = 9 + stand_id
+    if not 1 <= stand_id or second_octet > 255:
+        raise ValueError("stand_id cannot be mapped to a unique IPv4 second octet")
+
+    prefix = f"10.{second_octet}.0"
+    return DeploymentConfig(
+        network=NetworkDeploymentSpec(
+            cidr=f"{prefix}.0/24",
+            gateway=f"{prefix}.1",
+            dhcp_start=f"{prefix}.100",
+            dhcp_end=f"{prefix}.200",
+            external_network=external_network,
+        ),
+        vms=[
+            VMDeploymentSpec(
+                role=vm.role,
+                image=vm.image,
+                flavor=vm.flavor,
+                ip=f"{prefix}.{vm.ip.rsplit('.', 1)[1]}",
+                enabled=vm.enabled,
+            )
+            for vm in default_lab3_config(external_network).vms
+        ],
+    )

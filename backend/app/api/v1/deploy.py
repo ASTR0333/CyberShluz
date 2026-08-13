@@ -10,7 +10,7 @@ from app.core.database import get_db
 from app.core.models import RoleEnum, Stand, StandStatusEnum, User
 from app.core.openstack_client import OpenStackClient, CapacityExceededException
 from app.core.config import settings
-from app.core.topology import default_lab3_config
+from app.core.topology import default_lab3_config, lab3_config_for_stand
 from app.core.security import UserRole, require_student
 
  
@@ -64,7 +64,14 @@ async def deploy(
     auth_user_id = int(user.get("user_id", 0))
     request.user_id = auth_username
     request.role = auth_role
-    deployment = request.deployment or default_lab3_config(settings.OS_NETWORK_NAME or "Public")
+    external_network = settings.OS_NETWORK_NAME or "Public"
+    # Student topology is server-controlled. Hiding the fields in the UI alone
+    # would still allow a crafted API request to choose images, flavors or IPs.
+    deployment = (
+        default_lab3_config(external_network)
+        if auth_role == UserRole.STUDENT
+        else request.deployment or default_lab3_config(external_network)
+    )
 
      
     if auth_role == UserRole.STUDENT:
@@ -151,6 +158,11 @@ async def deploy(
         )
 
     stand_id_str = str(stand.id)
+
+    if auth_role == UserRole.STUDENT:
+        # The pool stand id is stable and unique while a stand is active. Use
+        # it to assign a deterministic, non-overlapping fixed-address subnet.
+        deployment = lab3_config_for_stand(int(stand.id), external_network)
 
      
      

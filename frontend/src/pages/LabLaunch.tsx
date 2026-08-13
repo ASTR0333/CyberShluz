@@ -50,6 +50,7 @@ export const LabLaunch = () => {
   }, [isTeacher, navigate]);
 
   useEffect(() => {
+    if (!isTeacher) return;
     mockApi.getDeploymentOptions()
       .then((data) => {
         setOptions(data);
@@ -58,7 +59,7 @@ export const LabLaunch = () => {
       .catch((error: unknown) => {
         toast.error(error instanceof Error ? error.message : 'Не удалось загрузить параметры OpenStack');
       });
-  }, []);
+  }, [isTeacher]);
 
   const enabledVMs = useMemo(
     () => deployment?.vms.filter((vm) => vm.enabled) ?? [],
@@ -85,14 +86,14 @@ export const LabLaunch = () => {
   };
 
   const handleDeploy = async () => {
-    if (!deployment) return;
+    if (isTeacher && !deployment) return;
     setIsDeploying(true);
     try {
       const res = await mockApi.deploy({
         user_id: userId,
         lab_id: labId,
         role: isTeacher ? 'teacher' : 'student',
-        deployment,
+        ...(isTeacher && deployment ? { deployment } : {}),
       });
       toast.success('Стенд зарезервирован! Деплой запущен.');
       setStandId(res.stand_id);
@@ -114,9 +115,43 @@ export const LabLaunch = () => {
     'Настройка SSH, Security Group и Floating IP',
   ];
 
-  if (!deployment || !options || !existingStandChecked) {
+  if (!existingStandChecked || (isTeacher && (!deployment || !options))) {
     return <div className="max-w-5xl mx-auto p-10 text-center text-cyber-gray-light">Загрузка каталога OpenStack…</div>;
   }
+
+  if (!isTeacher) {
+    return (
+      <div className="max-w-xl mx-auto">
+        <section className="bg-white rounded-brand border border-cyber-gray-border overflow-hidden">
+          <div className="h-1 bg-cyber-blue-accent" />
+          <div className="p-8">
+            <p className="text-[11px] font-bold text-cyber-gray-light uppercase tracking-[0.18em]">Лабораторная работа №3</p>
+            <h1 className="text-[22px] font-bold text-cyber-gray-dark mt-1 flex items-center">
+              <Server className="w-5 h-5 mr-2.5 text-cyber-blue-accent" />
+              Развёртывание стенда
+            </h1>
+            <p className="mt-3 mb-6 text-sm text-cyber-gray-light">
+              Параметры виртуальных машин и изолированная сеть назначаются автоматически.
+            </p>
+            <DeployButton onClick={handleDeploy} isLoading={isDeploying} className="w-full">
+              <ArrowRight className="w-4 h-4 mr-2" /> Развернуть
+            </DeployButton>
+
+            {standId && (
+              <div className="mt-5 flex items-center gap-3 bg-emerald-50 border border-emerald-200 rounded-brand p-4 text-emerald-800 text-sm">
+                <CheckCircle2 className="w-5 h-5 flex-shrink-0" />
+                Стенд принят в работу. Перенаправление…
+              </div>
+            )}
+          </div>
+        </section>
+      </div>
+    );
+  }
+
+  // The guards above ensure both values exist for the teacher-only editor.
+  const teacherDeployment = deployment!;
+  const teacherOptions = options!;
 
   return (
     <div className="max-w-6xl mx-auto space-y-6">
@@ -144,7 +179,7 @@ export const LabLaunch = () => {
 
             <div className="grid grid-cols-3 gap-3">
               <Summary icon={<Cpu className="w-4 h-4" />} label="Виртуальные машины" value={`${enabledVMs.length} ВМ`} />
-              <Summary icon={<Network className="w-4 h-4" />} label="Подсеть" value={deployment.network.cidr} />
+              <Summary icon={<Network className="w-4 h-4" />} label="Подсеть" value={teacherDeployment.network.cidr} />
               <Summary icon={<Clock className="w-4 h-4" />} label="TTL" value="2 часа" />
             </div>
 
@@ -155,27 +190,27 @@ export const LabLaunch = () => {
 
             {showSettings && (
               <div className="space-y-5 border border-cyber-gray-border rounded-brand p-5">
-                {options.catalog_error && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">{options.catalog_error}</p>}
+                {teacherOptions.catalog_error && <p className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded p-3">{teacherOptions.catalog_error}</p>}
                 <div>
                   <h2 className="text-xs font-bold uppercase tracking-wider text-cyber-gray-light mb-3">Сеть стенда</h2>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                    <Field label="CIDR" value={deployment.network.cidr} onChange={(value) => updateNetwork('cidr', value)} />
-                    <Field label="Шлюз" value={deployment.network.gateway} onChange={(value) => updateNetwork('gateway', value)} />
-                    <Field label="Внешняя сеть" value={deployment.network.external_network} list="external-networks" onChange={(value) => updateNetwork('external_network', value)} />
-                    <Field label="DHCP: начало" value={deployment.network.dhcp_start} onChange={(value) => updateNetwork('dhcp_start', value)} />
-                    <Field label="DHCP: конец" value={deployment.network.dhcp_end} onChange={(value) => updateNetwork('dhcp_end', value)} />
-                    <Field label="DNS (через запятую)" value={deployment.network.dns_nameservers.join(', ')} onChange={(value) => updateNetwork('dns_nameservers', value)} />
+                    <Field label="CIDR" value={teacherDeployment.network.cidr} onChange={(value) => updateNetwork('cidr', value)} />
+                    <Field label="Шлюз" value={teacherDeployment.network.gateway} onChange={(value) => updateNetwork('gateway', value)} />
+                    <Field label="Внешняя сеть" value={teacherDeployment.network.external_network} list="external-networks" onChange={(value) => updateNetwork('external_network', value)} />
+                    <Field label="DHCP: начало" value={teacherDeployment.network.dhcp_start} onChange={(value) => updateNetwork('dhcp_start', value)} />
+                    <Field label="DHCP: конец" value={teacherDeployment.network.dhcp_end} onChange={(value) => updateNetwork('dhcp_end', value)} />
+                    <Field label="DNS (через запятую)" value={teacherDeployment.network.dns_nameservers.join(', ')} onChange={(value) => updateNetwork('dns_nameservers', value)} />
                   </div>
                 </div>
 
                 <div>
                   <h2 className="text-xs font-bold uppercase tracking-wider text-cyber-gray-light mb-3">Виртуальные машины</h2>
                   <div className="space-y-3">
-                    {deployment.vms.map((vm, index) => (
+                    {teacherDeployment.vms.map((vm, index) => (
                       <div key={vm.role} className="grid grid-cols-1 md:grid-cols-[110px_1fr_150px_130px] gap-2 items-end p-3 bg-cyber-gray-surface rounded-brand border border-gray-200">
                         <div className="font-mono font-bold text-sm text-cyber-blue pb-2.5">{vm.role}</div>
                         <Field label="Образ" value={vm.image} list="image-options" onChange={(value) => updateVM(index, 'image', value)} />
-                        <SelectField label="Конфигурация" value={vm.flavor} options={options.flavors} onChange={(value) => updateVM(index, 'flavor', value)} />
+                        <SelectField label="Конфигурация" value={vm.flavor} options={teacherOptions.flavors} onChange={(value) => updateVM(index, 'flavor', value)} />
                         <Field label="IP-адрес" value={vm.ip} onChange={(value) => updateVM(index, 'ip', value)} />
                       </div>
                     ))}
@@ -184,8 +219,8 @@ export const LabLaunch = () => {
               </div>
             )}
 
-            <datalist id="image-options">{options.images.map((value) => <option key={value} value={value} />)}</datalist>
-            <datalist id="external-networks">{options.external_networks.map((value) => <option key={value} value={value} />)}</datalist>
+            <datalist id="image-options">{teacherOptions.images.map((value) => <option key={value} value={value} />)}</datalist>
+            <datalist id="external-networks">{teacherOptions.external_networks.map((value) => <option key={value} value={value} />)}</datalist>
 
             <DeployButton onClick={handleDeploy} isLoading={isDeploying} className="w-full">
               <ArrowRight className="w-4 h-4 mr-2" /> Проверить параметры и запустить
