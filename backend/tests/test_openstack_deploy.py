@@ -5,7 +5,7 @@ import socket
 import openstack
 import pytest
 
-from app.core.openstack_client import OpenStackClient
+from app.core.openstack_client import OpenStackClient, SSHBootstrapError
 from app.core.topology import DeploymentConfig, default_lab3_config
 
 
@@ -210,7 +210,7 @@ def test_legacy_access_falls_back_to_password_bootstrap(monkeypatch) -> None:
     client._prepare_lms_access("203.0.113.10", "admin-private", "student-private")
 
     assert len(verification_attempts) == 2
-    assert verification_attempts[0][1]["max_wait"] == 15
+    assert verification_attempts[0][1]["max_wait"] == 5
     assert verification_attempts[1][1]["max_wait"] == 60
     assert bootstrap_calls[0][1]["max_wait"] == 90
 
@@ -225,7 +225,10 @@ def test_legacy_bootstrap_prefers_nova_key_and_handles_passwordless_sudo(monkeyp
 
     class Stream:
         def __init__(self, status=0):
-            self.channel = SimpleNamespace(recv_exit_status=lambda: status)
+            self.channel = SimpleNamespace(
+                exit_status_ready=lambda: True,
+                recv_exit_status=lambda: status,
+            )
 
         def read(self):
             return b""
@@ -283,7 +286,10 @@ def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -
 
     class Stream:
         def __init__(self, status=0):
-            self.channel = SimpleNamespace(recv_exit_status=lambda: status)
+            self.channel = SimpleNamespace(
+                exit_status_ready=lambda: True,
+                recv_exit_status=lambda: status,
+            )
 
         def read(self):
             return b""
@@ -339,6 +345,71 @@ def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -
         ("sudo -S -p '' true", "ssh-password\n"),
         (commands[2], "root-password\n"),
     ]
+
+
+def test_legacy_bootstrap_stops_when_remote_sudo_hangs(monkeypatch) -> None:
+    client = OpenStackClient()
+    admin_private, _ = OpenStackClient._generate_local_keypair()
+    student_private, _ = OpenStackClient._generate_local_keypair()
+
+    class Clock:
+        now = 0.0
+
+        def monotonic(self):
+            return self.now
+
+        def sleep(self, seconds):
+            self.now += seconds
+
+    clock = Clock()
+
+    class HangingChannel:
+        closed = False
+
+        def exit_status_ready(self):
+            return False
+
+        def close(self):
+            self.closed = True
+
+    hanging_channel = HangingChannel()
+
+    class Stream:
+        channel = hanging_channel
+
+    class FakeSSHClient:
+        def set_missing_host_key_policy(self, _policy):
+            pass
+
+        def connect(self, **_kwargs):
+            pass
+
+        def exec_command(self, command, **_kwargs):
+            assert command == "sudo -n true"
+            return None, Stream(), Stream()
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr("app.core.openstack_client.time.monotonic", clock.monotonic)
+    monkeypatch.setattr("app.core.openstack_client.time.sleep", clock.sleep)
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_USER", "student")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_BOOTSTRAP_PASSWORD", "secret")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_ADMIN_USER", "labadmin")
+    monkeypatch.setattr("app.core.openstack_client.settings.VM_STUDENT_USER", "student")
+    monkeypatch.setattr("paramiko.SSHClient", FakeSSHClient)
+    monkeypatch.setattr(client, "_paramiko_key", lambda _key: object())
+
+    with pytest.raises(SSHBootstrapError, match="did not finish within 20s"):
+        client._bootstrap_legacy_lms_access(
+            "203.0.113.10",
+            admin_private,
+            student_private,
+            max_wait=10,
+        )
+
+    assert clock.now == 20
+    assert hanging_channel.closed is True
 
 
 def test_key_verification_uses_one_shared_timeout(monkeypatch) -> None:

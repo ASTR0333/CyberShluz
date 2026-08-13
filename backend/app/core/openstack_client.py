@@ -695,13 +695,16 @@ Restart-Service sshd
 
         if bootstrap_user:
             # A short probe keeps cloud-init images on the passwordless path.
+            # Explicit bootstrap credentials normally mean this is a legacy
+            # image, so do not spend 15 seconds retrying a key that is not yet
+            # installed before trying the configured password.
             progress("Проверка SSH-ключей cloud-init на L-MS...")
             try:
                 self._verify_lms_access(
                     ip,
                     admin_private_key,
                     student_private_key,
-                    max_wait=min(15, timeout),
+                    max_wait=min(5, timeout),
                     progress_cb=progress,
                 )
                 return
@@ -783,6 +786,31 @@ Restart-Service sshd
             ("Nova-injected admin key", {"pkey": bootstrap_pkey}),
             ("legacy password", {"password": bootstrap_password}),
         ]
+
+        def wait_for_exit_status(channel, stage: str, command_timeout: int) -> int:
+            """Wait for a remote command under a real wall-clock deadline.
+
+            Paramiko's ``exec_command(timeout=...)`` only configures channel
+            socket operations. ``recv_exit_status()`` itself can otherwise
+            block forever when sudo, su, PAM or a service command gets stuck.
+            """
+            command_started = time.monotonic()
+            command_deadline = command_started + command_timeout
+            last_reported = -1
+            while not channel.exit_status_ready():
+                now = time.monotonic()
+                elapsed = min(command_timeout, int(now - command_started))
+                if progress_cb and (last_reported < 0 or elapsed - last_reported >= 5):
+                    progress_cb(f"{stage}: {elapsed}/{command_timeout} с")
+                    last_reported = elapsed
+                if now >= command_deadline:
+                    channel.close()
+                    raise SSHBootstrapError(
+                        f"{stage} did not finish within {command_timeout}s"
+                    )
+                time.sleep(min(1, command_deadline - now))
+            return channel.recv_exit_status()
+
         while time.monotonic() < deadline:
             if progress_cb:
                 elapsed = min(max_wait, int(time.monotonic() - started))
@@ -822,8 +850,15 @@ Restart-Service sshd
             )
 
         try:
+            if progress_cb:
+                progress_cb(f"SSH-вход выполнен ({connected_with}). Проверка прав...")
+            print(f"[OpenStack] SSH bootstrap connected via {connected_with}")
             _, sudo_stdout, _ = client.exec_command("sudo -n true", timeout=20)
-            passwordless_sudo = sudo_stdout.channel.recv_exit_status() == 0
+            passwordless_sudo = wait_for_exit_status(
+                sudo_stdout.channel,
+                "Проверка sudo без пароля",
+                20,
+            ) == 0
             sudo_args = "{} {} {} {}".format(
                 shlex.quote(admin_user),
                 shlex.quote(student_user),
@@ -843,11 +878,16 @@ Restart-Service sshd
                 )
                 probe_stdin.write(bootstrap_password + "\n")
                 probe_stdin.channel.shutdown_write()
-                password_sudo = probe_stdout.channel.recv_exit_status() == 0
+                password_sudo = wait_for_exit_status(
+                    probe_stdout.channel,
+                    "Проверка sudo с паролем",
+                    20,
+                ) == 0
                 if password_sudo:
                     command = f"sudo -S -p '' bash -s -- {sudo_args}"
                     stdin_prefix = bootstrap_password + "\n"
                     get_pty = False
+                    elevation_method = "sudo с паролем"
                 else:
                     # `su` reads its password from a TTY. The script is sent as
                     # base64 inside the root command so stdin contains only the
@@ -862,6 +902,13 @@ Restart-Service sshd
                     command = f"su root -c {shlex.quote(root_command)}"
                     stdin_prefix = root_password + "\n"
                     get_pty = True
+                    elevation_method = "su root"
+
+            if passwordless_sudo:
+                elevation_method = "sudo без пароля"
+            if progress_cb:
+                progress_cb(f"Настройка SSH через {elevation_method}...")
+            print(f"[OpenStack] Running SSH hardening via {elevation_method}")
 
             stdin, stdout, stderr = client.exec_command(
                 command,
@@ -873,7 +920,11 @@ Restart-Service sshd
             if not get_pty:
                 stdin.write(self._legacy_bootstrap_script())
             stdin.channel.shutdown_write()
-            rc = stdout.channel.recv_exit_status()
+            rc = wait_for_exit_status(
+                stdout.channel,
+                f"Настройка SSH через {elevation_method}",
+                90,
+            )
             output = stdout.read().decode(errors="ignore")[-500:]
             error = stderr.read().decode(errors="ignore")[-1000:]
             if rc != 0:
