@@ -166,7 +166,14 @@ if [[ "${PULL}" -eq 1 ]]; then
     compose pull --ignore-buildable
 fi
 if [[ "${REBUILD}" -eq 1 ]]; then
-    compose build --no-cache
+    echo "Rebuilding all application images and refreshing base images..."
+    compose build --pull --no-cache
+else
+    # The frontend is compiled inside Docker, so the host Node.js version is
+    # irrelevant. Always refresh node:lts-alpine before building to avoid
+    # silently reusing an EOL Node.js layer from the local Docker cache.
+    echo "Refreshing the frontend builder to the latest Node.js LTS image..."
+    compose build --pull frontend
 fi
 
 compose up -d --build --remove-orphans

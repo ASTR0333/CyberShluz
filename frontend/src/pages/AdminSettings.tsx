@@ -122,10 +122,10 @@ export const AdminSettings = () => {
   return (
     <div className="max-w-6xl mx-auto space-y-6">
       <div>
-        <p className="text-[11px] font-bold text-cyber-gray-light uppercase tracking-[0.18em]">
+        <p className="text-[11px] font-bold text-cyber-blue-accent uppercase tracking-[0.18em]">
           Администрирование
         </p>
-        <h1 className="text-[22px] font-bold text-cyber-gray-dark flex items-center mt-1">
+        <h1 className="text-2xl sm:text-[28px] font-black tracking-[-0.025em] text-cyber-blue-dark flex items-center mt-1">
           <SettingsIcon className="mr-2.5 w-5 h-5 text-cyber-blue-accent" />
           Стенд администратора
         </h1>
@@ -216,14 +216,14 @@ export const AdminSettings = () => {
           </div>
         </div>
 
-        <div className="mt-6 flex items-center justify-end gap-3">
+        <div className="mt-6 flex flex-col sm:flex-row sm:items-center sm:justify-end gap-3">
           <span className="text-xs text-cyber-gray-light">
             Текущие: ttl={settings?.default_ttl_hours}ч | freeze={settings?.freeze_duration_hours}ч | cap={Math.round((settings?.max_cluster_utilization ?? 0) * 100)}%
           </span>
           <button
             onClick={handleSave}
             disabled={saving}
-            className="inline-flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue disabled:bg-gray-300 shadow-sm"
+            className="inline-flex items-center justify-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue-dark disabled:bg-gray-300 shadow-sm"
           >
             {saving ? <Loader2 className="w-4 h-4 mr-2 animate-spin" /> : <Save className="w-4 h-4 mr-2" />}
             Сохранить
@@ -270,9 +270,9 @@ export const AdminSettings = () => {
         {audit.length === 0 ? (
           <p className="text-sm text-cyber-gray-light text-center py-6">Пока нет событий.</p>
         ) : (
-          <div className="font-mono text-[12px] space-y-1 max-h-96 overflow-y-auto">
+          <div className="font-mono text-[12px] space-y-1 max-h-96 overflow-auto">
             {audit.map((entry, i) => (
-              <div key={i} className="flex gap-3 py-1.5 border-b border-gray-100 last:border-0">
+              <div key={i} className="flex gap-3 py-1.5 border-b border-gray-100 last:border-0 min-w-[680px]">
                 <span className="text-cyber-gray-light flex-shrink-0">{new Date(entry.timestamp).toLocaleString('ru-RU')}</span>
                 <span className="font-bold text-cyber-blue-accent flex-shrink-0">{entry.actor}</span>
                 <span className="font-bold text-cyber-gray-dark flex-shrink-0">{entry.action}</span>

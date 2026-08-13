@@ -1,18 +1,103 @@
 @import "tailwindcss";
 @config "../tailwind.config.js";
 
+* {
+  box-sizing: border-box;
+}
+
 html, body, #root {
-  font-family: 'Inter', system-ui, -apple-system, 'Helvetica Neue', Arial, sans-serif;
+  min-width: 320px;
+  min-height: 100%;
+  font-family: Arial, 'Helvetica Neue', system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   letter-spacing: -0.01em;
 }
 
+body {
+  margin: 0;
+  background: #f4f8fc;
+  color: #282828;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+button,
+a,
+input,
+select {
+  -webkit-tap-highlight-color: transparent;
+}
+
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+textarea:focus-visible {
+  outline: 3px solid rgb(0 63 255 / 24%);
+  outline-offset: 2px;
+}
+
+::selection {
+  color: white;
+  background: #003fff;
+}
+
 .brand-wordmark {
-  font-family: 'Inter', system-ui, sans-serif;
+  font-family: Arial, 'Helvetica Neue', system-ui, sans-serif;
   font-weight: 900;
   letter-spacing: -0.045em;
-  color: #0b2552;
+  color: #00204d;
   line-height: 0.95;
 }
 
+.brand-surface {
+  background:
+    linear-gradient(135deg, rgb(131 208 245 / 10%) 0, transparent 28rem),
+    #f4f8fc;
+}
+
+.brand-grid {
+  background-image:
+    linear-gradient(rgb(0 32 77 / 4%) 1px, transparent 1px),
+    linear-gradient(90deg, rgb(0 32 77 / 4%) 1px, transparent 1px);
+  background-size: 32px 32px;
+}
+
+.brand-card {
+  background: white;
+  border: 1px solid #d4e5f7;
+  border-radius: 10px;
+  box-shadow: 0 12px 40px rgb(0 32 77 / 6%);
+}
+
+.vm-field-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 164px), 1fr));
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.vm-field-grid > * {
+  min-width: 0;
+}
+
+input[type='range'] {
+  accent-color: #003fff;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

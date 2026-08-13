@@ -320,20 +320,20 @@ export const StandStatus = () => {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
 
-        <div className="lg:col-span-2 bg-white rounded-brand shadow-sm border border-gray-200 p-8 relative overflow-hidden">
-          <div className="absolute top-0 left-0 right-0 h-1 bg-cyber-blue"></div>
+        <div className="lg:col-span-2 brand-card p-5 sm:p-8 relative overflow-hidden">
+          <div className="absolute top-0 left-0 right-0 h-1.5 bg-cyber-blue-accent"></div>
 
           <div className="flex justify-between items-start mb-8">
             <div>
-              <h1 className="text-xs font-bold text-cyber-gray-light uppercase tracking-widest mb-1">Стенд</h1>
-              <code className="text-cyber-gray-dark font-mono text-lg bg-gray-50 px-2 py-1 rounded border border-gray-200">
+              <h1 className="text-xs font-bold text-cyber-blue-accent uppercase tracking-widest mb-1">Лабораторный стенд</h1>
+              <code className="text-cyber-blue-dark font-mono text-lg bg-cyber-gray-surface px-2 py-1 rounded-brand border border-cyber-gray-border">
                 #{standId}
               </code>
             </div>
             <ProgressBadge status={status.status} />
           </div>
 
-          <div className="grid grid-cols-2 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 sm:gap-6">
             <div className="flex items-center p-5 bg-cyber-gray-surface rounded-brand border border-gray-200">
               <div className="w-12 h-12 bg-white rounded-full flex items-center justify-center shadow-sm border border-gray-100 mr-4">
                 <Globe className="w-6 h-6 text-cyber-blue" />

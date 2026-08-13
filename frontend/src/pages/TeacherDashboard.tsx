@@ -100,9 +100,10 @@ export const TeacherDashboard = () => {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl text-cyber-gray-dark font-normal mb-4">Мониторинг инфраструктуры</h1>
+        <p className="text-[11px] font-bold text-cyber-blue-accent uppercase tracking-[0.18em]">Киберполигон</p>
+        <h1 className="text-2xl sm:text-[28px] text-cyber-blue-dark font-black tracking-[-0.025em] mt-1 mb-5">Мониторинг инфраструктуры</h1>
 
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-cyber-gray-surface p-3 rounded-t-brand border border-cyber-gray-border border-b-0">
+        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-t-brand border border-cyber-gray-border border-b-0 shadow-[0_8px_24px_rgba(0,32,77,0.04)]">
           <div className="relative w-full sm:w-80">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-cyber-gray-light w-4 h-4" />
             <input
@@ -116,7 +117,7 @@ export const TeacherDashboard = () => {
 
           <button
             onClick={() => navigate('/launch')}
-            className="flex items-center gap-2 px-4 py-2 border border-cyber-blue-accent text-cyber-blue-accent rounded bg-white hover:bg-blue-50 transition-colors text-sm font-medium"
+            className="flex items-center gap-2 px-4 py-2 border border-cyber-blue-accent text-cyber-blue-accent rounded-brand bg-white hover:bg-[#E7F2FB] transition-colors text-sm font-bold"
           >
             <Plus className="w-4 h-4" />
             Новый стенд

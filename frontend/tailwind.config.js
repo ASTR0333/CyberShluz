@@ -9,30 +9,30 @@ export default {
       colors: {
         cyber: {
           blue: {
-            DEFAULT: '#3164c9',
-            light: '#5382e6',
-            dark: '#141f36',
-            accent: '#2b61c4',
+            DEFAULT: '#173E7E',
+            light: '#83D0F5',
+            dark: '#00204D',
+            accent: '#003FFF',
           },
           gray: {
-            dark: '#0f1729',
-            DEFAULT: '#374151',
-            light: '#6b7280',
-            surface: '#f4f6fa',
-            border: '#e5e8ef',
+            dark: '#282828',
+            DEFAULT: '#737373',
+            light: '#737373',
+            surface: '#F4F8FC',
+            border: '#D4E5F7',
           }
         },
         sidebar: {
-          dark: '#141f36',
-          icon: '#214389'
+          dark: '#00204D',
+          icon: '#173E7E'
         }
       },
       borderRadius: {
-        'brand': '6px',
+        'brand': '10px',
       },
       fontFamily: {
-        sans: ['Inter', 'system-ui', '-apple-system', 'Helvetica Neue', 'Arial', 'sans-serif'],
-        display: ['Inter', 'system-ui', 'sans-serif'],
+        sans: ['Arial', 'Helvetica Neue', 'system-ui', 'sans-serif'],
+        display: ['Arial', 'Helvetica Neue', 'system-ui', 'sans-serif'],
       },
       letterSpacing: {
         'brand': '-0.02em',

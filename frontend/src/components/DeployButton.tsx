@@ -15,9 +15,9 @@ export const DeployButton: React.FC<DeployButtonProps> = ({
     <button
       disabled={isLoading || props.disabled}
       className={`
-        flex items-center justify-center px-6 py-2.5 rounded-brand font-semibold transition-colors text-sm
-        bg-cyber-blue-accent text-white hover:bg-cyber-blue disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed
-        shadow-sm active:scale-[0.98]
+        flex items-center justify-center px-6 py-3 rounded-brand font-semibold transition-all text-sm
+        bg-cyber-blue-accent text-white hover:bg-cyber-blue-dark disabled:bg-gray-300 disabled:text-gray-500 disabled:cursor-not-allowed
+        shadow-[0_8px_22px_rgba(0,63,255,0.18)] hover:shadow-[0_10px_26px_rgba(0,32,77,0.2)] active:translate-y-px
         ${className}
       `}
       {...props}

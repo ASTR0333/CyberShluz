@@ -1,8 +1,9 @@
-FROM node:20-alpine AS builder
+ARG NODE_IMAGE=node:lts-alpine
+FROM ${NODE_IMAGE} AS builder
 WORKDIR /app
 
 COPY package*.json ./
-RUN npm ci
+RUN node --version && npm --version && npm ci
 
 COPY . .
 RUN npm run build
