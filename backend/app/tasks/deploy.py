@@ -48,7 +48,14 @@ def _persist_deployment_state(
 
 
 def _update_task_state_safely(task, *, state: str, meta: dict) -> None:
-    """A result-backend outage must not abort the actual OpenStack operation."""
+    """Publish progress without corrupting Celery's terminal result metadata."""
+    if state == "FAILURE":
+        # Celery FAILURE payloads must contain its serialized exception fields
+        # (exc_type, exc_message and exc_module). The task trace writes those
+        # correctly when the exception is raised; an arbitrary progress dict
+        # here makes Redis undecodable and can crash a solo worker.
+        logger.warning("Refusing to publish manual Celery FAILURE metadata")
+        return
     try:
         task.update_state(state=state, meta=meta)
     except Exception as exc:
@@ -223,7 +230,6 @@ def deploy_stand_task(
             message="Развёртывание завершилось ошибкой",
             error=str(exc),
         )
-        _update_task_state_safely(self, state="FAILURE", meta={"error": str(exc)})
         raise
 
     except CapacityExceededException as ce:
@@ -236,7 +242,6 @@ def deploy_stand_task(
             message="Развёртывание завершилось ошибкой",
             error=str(ce),
         )
-        _update_task_state_safely(self, state="FAILURE", meta={"error": str(ce)})
         raise
 
     except Exception as exc:
@@ -250,7 +255,6 @@ def deploy_stand_task(
             message="Развёртывание завершилось ошибкой",
             error=str(exc),
         )
-        _update_task_state_safely(self, state="FAILURE", meta={"error": str(exc)})
         raise
 
 

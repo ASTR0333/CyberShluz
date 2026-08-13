@@ -787,29 +787,91 @@ Restart-Service sshd
             ("legacy password", {"password": bootstrap_password}),
         ]
 
-        def wait_for_exit_status(channel, stage: str, command_timeout: int) -> int:
+        def drain_channel(channel, stdout_chunks: list[bytes], stderr_chunks: list[bytes]) -> None:
+            """Drain ready data so a full SSH window cannot stall the command."""
+            recv_ready = getattr(channel, "recv_ready", lambda: False)
+            while recv_ready():
+                chunk = channel.recv(4096)
+                if not chunk:
+                    break
+                stdout_chunks.append(chunk)
+
+            recv_stderr_ready = getattr(channel, "recv_stderr_ready", lambda: False)
+            while recv_stderr_ready():
+                chunk = channel.recv_stderr(4096)
+                if not chunk:
+                    break
+                stderr_chunks.append(chunk)
+
+        def remote_output_tail(stdout_chunks: list[bytes], stderr_chunks: list[bytes]) -> str:
+            output = b"".join(stdout_chunks + stderr_chunks).decode(errors="ignore")
+            return output.replace("\r", "").strip()[-1000:]
+
+        def wait_for_exit_status(
+            channel,
+            stage: str,
+            command_timeout: int,
+            stdout_chunks: list[bytes] | None = None,
+            stderr_chunks: list[bytes] | None = None,
+        ) -> int:
             """Wait for a remote command under a real wall-clock deadline.
 
             Paramiko's ``exec_command(timeout=...)`` only configures channel
             socket operations. ``recv_exit_status()`` itself can otherwise
             block forever when sudo, su, PAM or a service command gets stuck.
             """
+            stdout_chunks = stdout_chunks if stdout_chunks is not None else []
+            stderr_chunks = stderr_chunks if stderr_chunks is not None else []
             command_started = time.monotonic()
             command_deadline = command_started + command_timeout
             last_reported = -1
             while not channel.exit_status_ready():
+                drain_channel(channel, stdout_chunks, stderr_chunks)
                 now = time.monotonic()
                 elapsed = min(command_timeout, int(now - command_started))
                 if progress_cb and (last_reported < 0 or elapsed - last_reported >= 5):
                     progress_cb(f"{stage}: {elapsed}/{command_timeout} с")
                     last_reported = elapsed
                 if now >= command_deadline:
+                    details = remote_output_tail(stdout_chunks, stderr_chunks)
                     channel.close()
                     raise SSHBootstrapError(
                         f"{stage} did not finish within {command_timeout}s"
+                        + (f"; remote output: {details}" if details else "")
                     )
                 time.sleep(min(1, command_deadline - now))
+            drain_channel(channel, stdout_chunks, stderr_chunks)
             return channel.recv_exit_status()
+
+        def wait_for_su_password_prompt(
+            channel,
+            command_timeout: int,
+            stdout_chunks: list[bytes],
+            stderr_chunks: list[bytes],
+        ) -> None:
+            """Do not send typeahead that su may discard while disabling TTY echo."""
+            started_waiting = time.monotonic()
+            deadline = started_waiting + command_timeout
+            while time.monotonic() < deadline:
+                drain_channel(channel, stdout_chunks, stderr_chunks)
+                output = b"".join(stdout_chunks).decode(errors="ignore").casefold()
+                if "password:" in output or "пароль:" in output:
+                    return
+                if channel.exit_status_ready():
+                    rc = channel.recv_exit_status()
+                    details = remote_output_tail(stdout_chunks, stderr_chunks)
+                    raise SSHBootstrapError(
+                        f"su exited with code {rc} before requesting a password: "
+                        f"{details or 'no output'}"
+                    )
+                time.sleep(min(0.1, deadline - time.monotonic()))
+
+            details = remote_output_tail(stdout_chunks, stderr_chunks)
+            channel.close()
+            raise SSHBootstrapError(
+                f"su did not request a password within {command_timeout}s"
+                + (f"; remote output: {details}" if details else "")
+            )
 
         while time.monotonic() < deadline:
             if progress_cb:
@@ -899,7 +961,10 @@ Restart-Service sshd
                         f"printf %s {shlex.quote(script_b64)} | base64 -d | "
                         f"bash -s -- {sudo_args}"
                     )
-                    command = f"su root -c {shlex.quote(root_command)}"
+                    # Force a stable prompt and wait for it below. Sending the
+                    # password immediately is racy: su may flush queued TTY
+                    # input while it disables echo before reading the secret.
+                    command = f"LC_ALL=C su root -c {shlex.quote(root_command)}"
                     stdin_prefix = root_password + "\n"
                     get_pty = True
                     elevation_method = "su root"
@@ -915,18 +980,33 @@ Restart-Service sshd
                 timeout=90,
                 get_pty=get_pty,
             )
+            stdout_chunks: list[bytes] = []
+            stderr_chunks: list[bytes] = []
+            if get_pty:
+                wait_for_su_password_prompt(
+                    stdout.channel,
+                    15,
+                    stdout_chunks,
+                    stderr_chunks,
+                )
             if stdin_prefix:
                 stdin.write(stdin_prefix)
+                stdin.flush()
             if not get_pty:
                 stdin.write(self._legacy_bootstrap_script())
+                stdin.flush()
             stdin.channel.shutdown_write()
             rc = wait_for_exit_status(
                 stdout.channel,
                 f"Настройка SSH через {elevation_method}",
                 90,
+                stdout_chunks,
+                stderr_chunks,
             )
-            output = stdout.read().decode(errors="ignore")[-500:]
-            error = stderr.read().decode(errors="ignore")[-1000:]
+            stdout_chunks.append(stdout.read())
+            stderr_chunks.append(stderr.read())
+            output = b"".join(stdout_chunks).decode(errors="ignore")[-500:]
+            error = b"".join(stderr_chunks).decode(errors="ignore")[-1000:]
             if rc != 0:
                 raise SSHBootstrapError(
                     f"legacy SSH hardening failed with exit code {rc}: {error or output or 'no output'}"

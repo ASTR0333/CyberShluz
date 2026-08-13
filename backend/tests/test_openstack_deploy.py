@@ -240,6 +240,9 @@ def test_legacy_bootstrap_prefers_nova_key_and_handles_passwordless_sudo(monkeyp
         def write(self, value):
             script_input.append(value)
 
+        def flush(self):
+            pass
+
     class FakeSSHClient:
         def set_missing_host_key_policy(self, _policy):
             pass
@@ -283,6 +286,7 @@ def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -
     commands = []
     command_options = []
     stdin_writes = []
+    su_events = []
 
     class Stream:
         def __init__(self, status=0):
@@ -295,12 +299,44 @@ def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -
             return b""
 
     class Stdin:
-        def __init__(self, command):
+        def __init__(self, command, channel=None):
             self.command = command
-            self.channel = SimpleNamespace(shutdown_write=lambda: None)
+            self.channel = channel or SimpleNamespace(shutdown_write=lambda: None)
 
         def write(self, value):
             stdin_writes.append((self.command, value))
+            if self.command.startswith("LC_ALL=C su root -c "):
+                su_events.append("password_written")
+                self.channel.finished = True
+
+        def flush(self):
+            pass
+
+    class SuChannel:
+        finished = False
+        prompt_ready = True
+
+        def recv_ready(self):
+            return self.prompt_ready
+
+        def recv(self, _size):
+            self.prompt_ready = False
+            su_events.append("prompt_read")
+            return b"Password: "
+
+        def recv_stderr_ready(self):
+            return False
+
+        def exit_status_ready(self):
+            return self.finished
+
+        def recv_exit_status(self):
+            return 0
+
+        def shutdown_write(self):
+            pass
+
+    su_channel = SuChannel()
 
     class FakeSSHClient:
         def set_missing_host_key_policy(self, _policy):
@@ -316,8 +352,10 @@ def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -
                 return None, Stream(1), Stream(0)
             if command == "sudo -S -p '' true":
                 return Stdin(command), Stream(1), Stream(0)
-            assert command.startswith("su root -c ")
-            return Stdin(command), Stream(0), Stream(0)
+            assert command.startswith("LC_ALL=C su root -c ")
+            stream = Stream(0)
+            stream.channel = su_channel
+            return Stdin(command, su_channel), stream, Stream(0)
 
         def close(self):
             pass
@@ -339,8 +377,9 @@ def test_legacy_bootstrap_uses_su_when_ssh_user_is_not_in_sudoers(monkeypatch) -
 
     assert commands[0] == "sudo -n true"
     assert commands[1] == "sudo -S -p '' true"
-    assert commands[2].startswith("su root -c ")
+    assert commands[2].startswith("LC_ALL=C su root -c ")
     assert command_options[2]["get_pty"] is True
+    assert su_events == ["prompt_read", "password_written"]
     assert stdin_writes == [
         ("sudo -S -p '' true", "ssh-password\n"),
         (commands[2], "root-password\n"),
