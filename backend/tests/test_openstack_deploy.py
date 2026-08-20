@@ -24,8 +24,10 @@ def test_logical_slot_uses_its_openstack_project_name(monkeypatch) -> None:
     assert "project_id" not in connection_kwargs
 
 
-def test_server_is_created_directly_from_image(monkeypatch) -> None:
-    create_server_kwargs = {}
+def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) -> None:
+    create_server_calls = []
+    floating_ip_calls = []
+    bootstrap_calls = []
 
     class FakeCompute:
         def find_server(self, _name):
@@ -41,12 +43,12 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
             return SimpleNamespace(public_key=f"ssh-ed25519 key-for-{name}")
 
         def create_server(self, **kwargs):
-            create_server_kwargs.update(kwargs)
-            return SimpleNamespace(id="server-id")
+            create_server_calls.append(kwargs)
+            return SimpleNamespace(id=kwargs["name"])
 
-        def get_server(self, _server_id):
+        def get_server(self, server_id):
             return SimpleNamespace(
-                id="server-id",
+                id=server_id,
                 status="ACTIVE",
                 addresses={"stand-net": [{"OS-EXT-IPS:type": "fixed", "addr": "10.10.0.10"}]}
             )
@@ -68,10 +70,22 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
         "_ensure_security_group",
         lambda *_args: SimpleNamespace(name="stand1-sg"),
     )
-    monkeypatch.setattr(client, "_assign_floating_ip", lambda *_args: "203.0.113.10")
-    monkeypatch.setattr(client, "_prepare_lms_access", lambda *_args: None)
+    def assign_floating_ip(_conn, server_id, _external_network):
+        floating_ip_calls.append(server_id)
+        return {
+            "stand1-L-MS": "203.0.113.10",
+            "stand1-L-NFS": "203.0.113.70",
+            "stand1-L-PGSQL": "203.0.113.55",
+        }[server_id]
+
+    monkeypatch.setattr(client, "_assign_floating_ip", assign_floating_ip)
+    monkeypatch.setattr(
+        client,
+        "_prepare_lms_access",
+        lambda ip, _admin, _student, _progress, role: bootstrap_calls.append((role, ip)),
+    )
     payload = default_lab3_config().model_dump()
-    payload["vms"] = [payload["vms"][0]]
+    payload["vms"] = payload["vms"][:3]
     deployment = DeploymentConfig.model_validate(payload)
 
     result = client.deploy_lab3_stand(
@@ -83,11 +97,18 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
         deployment=deployment,
     )
 
-    assert create_server_kwargs["image_id"] == "image-id"
-    assert create_server_kwargs["flavor_id"] == "flavor-id"
-    assert "block_device_mapping_v2" not in create_server_kwargs
-    assert result["L-MS"]["status"] == "ACTIVE"
+    assert all(call["image_id"] == "image-id" for call in create_server_calls)
+    assert all(call["flavor_id"] == "flavor-id" for call in create_server_calls)
+    assert all("block_device_mapping_v2" not in call for call in create_server_calls)
+    assert floating_ip_calls == ["stand1-L-MS", "stand1-L-NFS", "stand1-L-PGSQL"]
     assert result["L-MS"]["floating_ip"] == "203.0.113.10"
+    assert result["L-NFS"]["floating_ip"] == "203.0.113.70"
+    assert result["L-PGSQL"]["floating_ip"] == "203.0.113.55"
+    assert bootstrap_calls == [
+        ("L-MS", "203.0.113.10"),
+        ("L-NFS", "203.0.113.70"),
+        ("L-PGSQL", "203.0.113.55"),
+    ]
 
 
 def test_windows_user_data_enables_rdp_only_for_tunnelled_private_access() -> None:

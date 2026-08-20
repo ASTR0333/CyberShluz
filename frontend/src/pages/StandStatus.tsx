@@ -330,11 +330,9 @@ export const StandStatus = () => {
   const sshUser = 'student';
   const linuxVms = Object.entries(status.vms || {}).filter(([role]) => role.toLowerCase().startsWith('l'));
 
-  const sshCommandFor = (role: string, internalIp?: string) => {
-    if (!status.ip_address) return null;
-    if (role.toUpperCase() === 'L-MS') return `ssh ${sshUser}@${status.ip_address}`;
-    if (!internalIp) return null;
-    return `ssh -J ${sshUser}@${status.ip_address} ${sshUser}@${internalIp}`;
+  const sshCommandFor = (floatingIp?: string) => {
+    if (!floatingIp) return null;
+    return `ssh ${sshUser}@${floatingIp}`;
   };
 
   return (
@@ -384,7 +382,7 @@ export const StandStatus = () => {
                 <Globe className="w-6 h-6 text-cyber-blue" />
               </div>
               <div>
-                <p className="text-xs text-cyber-gray-light font-bold uppercase tracking-wider mb-1">Публичный IP</p>
+                <p className="text-xs text-cyber-gray-light font-bold uppercase tracking-wider mb-1">Floating IP L-MS</p>
                 <p className="text-lg font-mono font-bold text-cyber-gray-dark">
                   {status.ip_address || 'Ожидание...'}
                 </p>
@@ -580,10 +578,12 @@ export const StandStatus = () => {
                 <div className="space-y-2">
                   {linuxVms.map(([role, vm]) => {
                     const internalIp = vm.ip || vm.expected_ip;
-                    const command = sshCommandFor(role, internalIp);
+                    const command = sshCommandFor(vm.floating_ip);
                     return (
                       <div key={role}>
-                        <p className="text-[10px] font-bold text-gray-400 mb-1">{role} · {internalIp || 'IP ожидается'}</p>
+                        <p className="text-[10px] font-bold text-gray-400 mb-1">
+                          {role} · Floating IP: {vm.floating_ip || 'ожидается'} · внутренний: {internalIp || '—'}
+                        </p>
                         {command ? (
                           <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center group">
                             <code className="text-cyber-blue-light text-[11px] break-all pr-2">{command}</code>
@@ -607,10 +607,10 @@ export const StandStatus = () => {
             </div>
 
             <div className="pt-4 border-t border-gray-700 text-gray-400 text-xs leading-relaxed space-y-1">
-              <p>Через L-MS доступны ВМ стенда по внутренней сети {status.network?.cidr || '—'}</p>
+              <p>Все Linux-ВМ доступны напрямую по Floating IP; внутренняя сеть стенда: {status.network?.cidr || '—'}</p>
               <div className="font-mono text-gray-500 text-[11px] flex flex-wrap gap-x-3">
                 {Object.entries(status.vms || {})
-                  .filter(([role]) => role !== 'L-MS')
+                  .filter(([role]) => !role.toLowerCase().startsWith('l'))
                   .map(([role, vm]) => <span key={role}>{role}: {vm.ip || vm.expected_ip}</span>)}
               </div>
             </div>
@@ -643,7 +643,9 @@ export const StandStatus = () => {
                     isVmActive ? 'text-green-600' : isVmBuilding ? 'text-yellow-600' : 'text-red-500'
                   }`} />
                   <p className="font-mono font-bold text-xs text-cyber-gray-dark">{role}</p>
-                  <p className="font-mono text-[11px] text-gray-500 mt-0.5">{vm.ip || vm.expected_ip}</p>
+                  <p className="font-mono text-[11px] text-gray-500 mt-0.5">
+                    {vm.floating_ip || vm.ip || vm.expected_ip}
+                  </p>
                   <p className={`text-xs font-bold mt-1 ${
                     isVmActive ? 'text-green-600' : isVmBuilding ? 'text-yellow-600' : 'text-red-500'
                   }`}>
@@ -690,8 +692,8 @@ export const StandStatus = () => {
           <div className="p-6 font-mono text-sm min-h-[160px] text-gray-300 bg-black">
             {isChecking && (
               <div className="text-cyber-blue-light animate-pulse space-y-1">
-                <p>$ ansible-playbook lab03_cyber.yml -i {status?.ip_address},</p>
-                <p className="text-gray-500"># Подключение к L-MS ({status?.ip_address})...</p>
+                <p>$ ansible-playbook lab03_cyber.yml</p>
+                <p className="text-gray-500"># Прямое подключение к Linux-ВМ по Floating IP...</p>
                 <p className="text-gray-500"># Проверка порта 9877 (Snapdrive)...</p>
                 <p className="text-gray-500"># Проверка модуля snapapi (L-NFS)...</p>
                 <p className="text-gray-500"># Проверка служб Acronis...</p>

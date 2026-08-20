@@ -150,7 +150,7 @@ class CheckerService:
         ssh_user: str,
         ssh_key_path: str,
     ) -> str:
-        """Build a role-aware inventory; private hosts are reached through L-MS."""
+        """Build a role-aware inventory, using direct public addresses when available."""
         groups: dict[str, dict] = {}
         role_groups = {"L-MS": "lms", "L-NFS": "nfs", "L-PGSQL": "pgsql", "W-DC": "wdc"}
         for role, group_name in role_groups.items():

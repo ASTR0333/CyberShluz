@@ -65,16 +65,22 @@ def add_pubkey(stand_id: str, body: PubkeyRequest, db: Session = Depends(get_db)
 
     linux_targets = _linux_targets(stand.vm_details)
     _push_pubkey_to_linux_hosts(stand.ip_address, stand.private_key, pub, linux_targets)
+    commands = [
+        f"ssh student@{floating_ip or stand.ip_address}"
+        for role, floating_ip in linux_targets
+        if floating_ip or role.upper() == "L-MS"
+    ]
     return {
         "message": (
             "Ключ успешно добавлен на все Linux-машины стенда. "
-            f"Подключайтесь к L-MS: ssh student@{stand.ip_address}"
-        )
+            "Подключайтесь к каждой машине напрямую по её Floating IP."
+        ),
+        "commands": commands,
     }
 
 
 def _linux_targets(vm_details: str | None) -> list[tuple[str, str | None]]:
-    """Return every L-prefixed VM and its internal address.
+    """Return every L-prefixed VM and its public address.
 
     Old stands may not have persisted VM details. They still expose L-MS via
     ``stand.ip_address``, so keep that target as a backwards-compatible fallback.
@@ -90,8 +96,8 @@ def _linux_targets(vm_details: str | None) -> list[tuple[str, str | None]]:
     for role, details in vms.items():
         if not str(role).lower().startswith("l") or not isinstance(details, dict):
             continue
-        internal_ip = details.get("ip") or details.get("expected_ip")
-        targets.append((str(role), str(internal_ip) if internal_ip else None))
+        floating_ip = details.get("floating_ip")
+        targets.append((str(role), str(floating_ip) if floating_ip else None))
     return targets or [("L-MS", None)]
 
 
@@ -170,7 +176,7 @@ def _push_pubkey_to_linux_hosts(
 ):
     user = settings.VM_ADMIN_USER
 
-    print(f"[pubkey] === Подключение к {user}@{ip} ===", flush=True)
+    print("[pubkey] === Прямая установка ключа на Linux-ВМ стенда ===", flush=True)
     print(f"[pubkey] Длина приватного ключа: {len(system_private_key)} байт", flush=True)
 
     try:
@@ -181,60 +187,26 @@ def _push_pubkey_to_linux_hosts(
         raise HTTPException(status_code=500, detail=f"Не удалось разобрать приватный ключ стенда: {e}")
 
      
-    try:
-        bastion = _connect_with_key(ip, user, pkey, max_wait)
-    except Exception as net_err:
+    errors: list[str] = []
+    for role, floating_ip in linux_targets:
+        target_ip = floating_ip or (ip if role.upper() == "L-MS" else None)
+        if not target_ip:
+            errors.append(f"{role}: Floating IP не известен")
+            continue
+
+        client = None
+        try:
+            print(f"[pubkey] Подключение к {role}: {user}@{target_ip}", flush=True)
+            client = _connect_with_key(target_ip, user, pkey, max_wait)
+            _install_pubkey(client, student_public_key, role)
+        except Exception as exc:
+            errors.append(f"{role}: {type(exc).__name__}: {exc}")
+        finally:
+            if client is not None:
+                client.close()
+
+    if errors:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Не удалось подключиться к стенду: {type(net_err).__name__}: {net_err}",
+            detail="Не удалось добавить ключ на все Linux-машины: " + "; ".join(errors),
         )
-
-    try:
-        bastion_role = next(
-            (role for role, _target_ip in linux_targets if role.upper() == "L-MS"),
-            linux_targets[0][0],
-        )
-        _install_pubkey(bastion, student_public_key, bastion_role)
-
-        transport = bastion.get_transport()
-        if transport is None or not transport.is_active():
-            raise RuntimeError("SSH-транспорт L-MS недоступен")
-
-        import paramiko
-
-        for role, target_ip in linux_targets:
-            if role == bastion_role:
-                continue
-            if not target_ip:
-                raise RuntimeError(f"{role}: внутренний IP не известен")
-
-            channel = transport.open_channel(
-                "direct-tcpip",
-                (target_ip, 22),
-                ("127.0.0.1", 0),
-            )
-            target_client = paramiko.SSHClient()
-            target_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
-            try:
-                target_client.connect(
-                    hostname=target_ip,
-                    username=user,
-                    pkey=pkey,
-                    sock=channel,
-                    timeout=8,
-                    look_for_keys=False,
-                    allow_agent=False,
-                )
-                _install_pubkey(target_client, student_public_key, role)
-            finally:
-                target_client.close()
-                channel.close()
-    except HTTPException:
-        raise
-    except Exception as exc:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail=f"Не удалось добавить ключ на все Linux-машины: {exc}",
-        ) from exc
-    finally:
-        bastion.close()

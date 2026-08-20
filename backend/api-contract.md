@@ -94,7 +94,8 @@
 **POST** `/api/v1/stand/{stand_id}/pubkey`
 
 Публичный ключ устанавливается пользователю `student` на все ВМ стенда, роль
-которых начинается с `L`. Для внутренних ВМ backend подключается через L-MS.
+которых начинается с `L`. Backend подключается к каждой Linux-ВМ напрямую по её
+Floating IP; L-MS не используется как bastion.
 
 ## 8. Веб-консоль Windows-ВМ
 **POST** `/api/v1/stand/{stand_id}/console/{vm_role}`

@@ -103,12 +103,19 @@ async def start_check(
             raise ValueError("У L-MS нет Floating IP")
 
         stand_hosts = {"L-MS": {"address": lms_ip}}
-        for role in ("L-NFS", "L-PGSQL", "W-DC"):
+        for role in ("L-NFS", "L-PGSQL"):
             vm = vm_results.get(role, {})
-            address = vm.get("ip") or vm.get("expected_ip")
+            address = vm.get("floating_ip")
             if not address:
-                raise ValueError(f"В топологии отсутствует адрес {role}")
-            stand_hosts[role] = {"address": address, "proxy_jump": lms_ip}
+                raise ValueError(f"У {role} нет Floating IP")
+            stand_hosts[role] = {"address": address}
+
+        windows_vm = vm_results.get("W-DC")
+        if windows_vm:
+            windows_address = windows_vm.get("ip") or windows_vm.get("expected_ip")
+            if not windows_address:
+                raise ValueError("В топологии отсутствует адрес W-DC")
+            stand_hosts["W-DC"] = {"address": windows_address, "proxy_jump": lms_ip}
     except (ValueError, TypeError, json.JSONDecodeError) as e:
         logger.error(f"Error parsing vm_details for stand {stand_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Ошибка топологии для проверки: {e}")

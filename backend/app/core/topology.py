@@ -76,7 +76,7 @@ class DeploymentConfig(BaseModel):
         if len(roles) != len(set(roles)):
             raise ValueError("VM roles must be unique")
         if "L-MS" not in roles:
-            raise ValueError("L-MS is required because it is the access and management VM")
+            raise ValueError("L-MS is required by the lab topology")
 
         network = IPv4Network(self.network.cidr, strict=True)
         reserved = {

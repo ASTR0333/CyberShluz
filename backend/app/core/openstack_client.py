@@ -498,10 +498,12 @@ class OpenStackClient:
          
          
          
+        linux_roles = [role for role in topology if role.upper().startswith("L-")]
         if progress_cb:
-            progress_cb(95, "Назначение Floating IP для L-MS...")
+            progress_cb(95, "Назначение Floating IP для Linux-ВМ...")
 
-        for vm_role in ["L-MS"]:
+        floating_ip_errors: list[str] = []
+        for vm_role in linux_roles:
             vm_info = results.get(vm_role)
             if vm_info and vm_info["status"] == "ACTIVE":
                 try:
@@ -517,10 +519,20 @@ class OpenStackClient:
                             resource_cb(results, net_info)
                 except Exception as e:
                     print(f"[OpenStack] Floating IP assignment failed for {vm_role}: {e}")
+                    floating_ip_errors.append(f"{vm_role}: {e}")
+
+                if not vm_info.get("floating_ip"):
+                    floating_ip_errors.append(f"{vm_role}: Floating IP не получен")
+
+        if floating_ip_errors:
+            raise CapacityExceededException(
+                "Не удалось назначить Floating IP всем Linux-ВМ: "
+                + "; ".join(dict.fromkeys(floating_ip_errors))
+            )
 
          
          
-        for vm_role in ["L-MS"]:
+        for vm_role in linux_roles:
             vm_info = results.get(vm_role)
             if vm_info and vm_info.get("floating_ip"):
                 if progress_cb:
@@ -531,13 +543,13 @@ class OpenStackClient:
                         admin_private_key,
                         student_private_key,
                         progress_cb,
+                        vm_role,
                     )
                     vm_info["ssh_bootstrapped"] = True
                 except Exception as e:
                     print(f"[OpenStack] SSH bootstrap failed for {vm_role}: {e}")
                     raise SSHBootstrapError(
-                        "L-MS did not pass secure SSH bootstrap and key verification: "
-                        f"{e}"
+                        f"{vm_role} did not pass secure SSH bootstrap and key verification: {e}"
                     ) from e
 
          
@@ -682,6 +694,7 @@ Restart-Service sshd
         admin_private_key: str,
         student_private_key: str,
         progress_cb=None,
+        vm_role: str = "Linux VM",
     ) -> None:
         """Use cloud-init keys when available, otherwise harden a legacy image."""
         timeout = max(1, int(settings.SSH_BOOTSTRAP_TIMEOUT))
@@ -702,7 +715,7 @@ Restart-Service sshd
             # Explicit bootstrap credentials normally mean this is a legacy
             # image, so do not spend 15 seconds retrying a key that is not yet
             # installed before trying the configured password.
-            progress("Проверка SSH-ключей cloud-init на L-MS...")
+            progress(f"Проверка SSH-ключей cloud-init на {vm_role}...")
             try:
                 self._verify_lms_access(
                     ip,
@@ -715,7 +728,7 @@ Restart-Service sshd
             except Exception as key_error:
                 print(f"[OpenStack] Initial key-only SSH probe failed: {key_error}")
 
-            progress(f"Ожидание резервного SSH bootstrap на L-MS (до {timeout} с)...")
+            progress(f"Ожидание резервного SSH bootstrap на {vm_role} (до {timeout} с)...")
             self._bootstrap_legacy_lms_access(
                 ip,
                 admin_private_key,
@@ -738,7 +751,7 @@ Restart-Service sshd
                 raise SSHBootstrapError(f"post-bootstrap key verification failed: {exc}") from exc
 
         try:
-            progress(f"Ожидание SSH-ключей cloud-init на L-MS (до {timeout} с)...")
+            progress(f"Ожидание SSH-ключей cloud-init на {vm_role} (до {timeout} с)...")
             self._verify_lms_access(
                 ip,
                 admin_private_key,
@@ -880,7 +893,7 @@ Restart-Service sshd
         while time.monotonic() < deadline:
             if progress_cb:
                 elapsed = min(max_wait, int(time.monotonic() - started))
-                progress_cb(f"Ожидание SSH bootstrap на L-MS: {elapsed}/{max_wait} с")
+                progress_cb(f"Ожидание SSH bootstrap на Linux-ВМ: {elapsed}/{max_wait} с")
             for auth_name, auth_kwargs in auth_methods:
                 candidate = paramiko.SSHClient()
                 candidate.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -1019,7 +1032,7 @@ Restart-Service sshd
             client.close()
 
         print(
-            f"[OpenStack] Legacy L-MS @ {ip} hardened via {connected_with}; "
+            f"[OpenStack] Legacy Linux VM @ {ip} hardened via {connected_with}; "
             "password SSH disabled"
         )
 
