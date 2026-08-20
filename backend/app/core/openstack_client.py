@@ -31,6 +31,7 @@ class VMProvisioningError(RuntimeError):
 class OpenStackClient:
     SSH_POLICY_METADATA_KEY = "cybershluz_ssh_policy"
     SSH_POLICY_VERSION = "3"
+    SSH_ACCESS_ROLE = "L-MS"
 
     def __init__(self, project_ref: str | None = None):
         self._conn = None
@@ -525,61 +526,52 @@ class OpenStackClient:
          
          
          
-        linux_roles = [role for role in topology if role.upper().startswith("L-")]
+        ssh_role = self.SSH_ACCESS_ROLE
+        vm_info = results.get(ssh_role)
         if progress_cb:
-            progress_cb(95, "Назначение Floating IP для Linux-ВМ...")
+            progress_cb(95, f"Назначение Floating IP для {ssh_role}...")
 
-        floating_ip_errors: list[str] = []
-        reserved_floating_ips: set[str] = set()
-        for vm_role in linux_roles:
-            vm_info = results.get(vm_role)
-            if vm_info and vm_info["status"] == "ACTIVE":
-                try:
-                    floating_ip = self._assign_floating_ip(
-                        conn,
-                        vm_info["server_id"],
-                        deployment.network.external_network,
-                        reserved_floating_ips,
-                    )
-                    if floating_ip:
-                        vm_info["floating_ip"] = floating_ip
-                        print(f"[OpenStack] Floating IP {floating_ip} assigned to {vm_role}")
-                        if resource_cb:
-                            resource_cb(results, net_info)
-                except Exception as e:
-                    print(f"[OpenStack] Floating IP assignment failed for {vm_role}: {e}")
-                    floating_ip_errors.append(f"{vm_role}: {e}")
+        if not vm_info or vm_info.get("status") != "ACTIVE":
+            # Let the task layer report the complete VM provisioning status.
+            # In particular, a BUILD timeout is not a Floating IP failure.
+            results["__network__"] = net_info
+            return results
 
-                if not vm_info.get("floating_ip"):
-                    floating_ip_errors.append(f"{vm_role}: Floating IP не получен")
-
-        if floating_ip_errors:
-            raise CapacityExceededException(
-                "Не удалось назначить Floating IP всем Linux-ВМ: "
-                + "; ".join(dict.fromkeys(floating_ip_errors))
+        try:
+            floating_ip = self._assign_floating_ip(
+                conn,
+                vm_info["server_id"],
+                deployment.network.external_network,
+                set(),
             )
+        except Exception as exc:
+            raise CapacityExceededException(
+                f"Не удалось назначить Floating IP для {ssh_role}: {exc}"
+            ) from exc
+        if not floating_ip:
+            raise CapacityExceededException(f"{ssh_role}: Floating IP не получен")
 
-         
-         
-        for vm_role in linux_roles:
-            vm_info = results.get(vm_role)
-            if vm_info and vm_info.get("floating_ip"):
-                if progress_cb:
-                    progress_cb(97, f"Настройка SSH-доступа на {vm_role}...")
-                try:
-                    self._prepare_lms_access(
-                        vm_info["floating_ip"],
-                        admin_private_key,
-                        student_private_key,
-                        progress_cb,
-                        vm_role,
-                    )
-                    vm_info["ssh_bootstrapped"] = True
-                except Exception as e:
-                    print(f"[OpenStack] SSH bootstrap failed for {vm_role}: {e}")
-                    raise SSHBootstrapError(
-                        f"{vm_role} did not pass secure SSH bootstrap and key verification: {e}"
-                    ) from e
+        vm_info["floating_ip"] = floating_ip
+        print(f"[OpenStack] Floating IP {floating_ip} assigned to {ssh_role}")
+        if resource_cb:
+            resource_cb(results, net_info)
+
+        if progress_cb:
+            progress_cb(97, f"Настройка SSH-доступа на {ssh_role}...")
+        try:
+            self._prepare_lms_access(
+                floating_ip,
+                admin_private_key,
+                student_private_key,
+                progress_cb,
+                ssh_role,
+            )
+            vm_info["ssh_bootstrapped"] = True
+        except Exception as exc:
+            print(f"[OpenStack] SSH bootstrap failed for {ssh_role}: {exc}")
+            raise SSHBootstrapError(
+                f"{ssh_role} did not pass secure SSH bootstrap and key verification: {exc}"
+            ) from exc
 
          
          

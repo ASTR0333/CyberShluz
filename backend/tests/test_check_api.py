@@ -48,8 +48,8 @@ def make_stand(status=StandStatusEnum.READY):
         vm_details=json.dumps(
             {
                 "L-MS": {"floating_ip": "203.0.113.10", "ip": "10.16.0.10"},
-                "L-NFS": {"floating_ip": "203.0.113.70", "ip": "10.16.0.70"},
-                "L-PGSQL": {"floating_ip": "203.0.113.55", "ip": "10.16.0.55"},
+                "L-NFS": {"ip": "10.16.0.70"},
+                "L-PGSQL": {"ip": "10.16.0.55"},
                 "W-DC": {"ip": "10.16.0.5"},
             }
         ),
@@ -93,8 +93,12 @@ async def test_successful_check_keeps_stand_ready_and_persists_result(monkeypatc
     assert persisted["status"] == "PASSED"
     assert stand.status == StandStatusEnum.READY
     assert len(grade_calls) == 1
-    assert checker_calls[0]["stand_hosts"]["L-NFS"] == {"address": "203.0.113.70"}
-    assert checker_calls[0]["stand_hosts"]["L-PGSQL"] == {"address": "203.0.113.55"}
+    assert "L-NFS" not in checker_calls[0]["stand_hosts"]
+    assert "L-PGSQL" not in checker_calls[0]["stand_hosts"]
+    assert checker_calls[0]["stand_hosts"]["W-DC"] == {
+        "address": "10.16.0.5",
+        "proxy_jump": "203.0.113.10",
+    }
 
 
 @pytest.mark.asyncio

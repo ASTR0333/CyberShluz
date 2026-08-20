@@ -328,7 +328,7 @@ export const StandStatus = () => {
   const isActive = ['READY', 'DEPLOYING', 'PENDING', 'FAILED'].includes(status.status);
   const isFrozen = status.status === 'FREEZE';
   const sshUser = 'student';
-  const linuxVms = Object.entries(status.vms || {}).filter(([role]) => role.toLowerCase().startsWith('l'));
+  const linuxVms = Object.entries(status.vms || {}).filter(([role]) => role.toUpperCase() === 'L-MS');
 
   const sshCommandFor = (floatingIp?: string) => {
     if (!floatingIp) return null;
@@ -544,7 +544,7 @@ export const StandStatus = () => {
                 {keySubmitted ? (
                   <div className="flex items-center gap-2 text-green-400 text-xs bg-green-900/20 border border-green-800 rounded p-2.5">
                     <CheckCircle2 size={14} className="flex-shrink-0" />
-                    Ключ добавлен на все Linux-машины — можешь подключаться!
+                    Ключ добавлен на L-MS — можешь подключаться!
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -563,7 +563,7 @@ export const StandStatus = () => {
                       {isSubmittingKey
                         ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         : <Key className="w-4 h-4 mr-2" />}
-                      Добавить ключ на все Linux-машины
+                      Добавить ключ на L-MS
                     </button>
                   </div>
                 )}
@@ -573,7 +573,7 @@ export const StandStatus = () => {
               <div>
                 <p className="font-bold mb-2 text-gray-300 text-xs uppercase tracking-wider flex items-center gap-1.5">
                   <span className={`${keySubmitted ? 'bg-green-600' : 'bg-gray-600'} text-white rounded-full w-4 h-4 inline-flex items-center justify-center text-[10px] font-bold flex-shrink-0`}>4</span>
-                  Подключайся к Linux
+                  Подключайся к L-MS
                 </p>
                 <div className="space-y-2">
                   {linuxVms.map(([role, vm]) => {
@@ -607,7 +607,7 @@ export const StandStatus = () => {
             </div>
 
             <div className="pt-4 border-t border-gray-700 text-gray-400 text-xs leading-relaxed space-y-1">
-              <p>Все Linux-ВМ доступны напрямую по Floating IP; внутренняя сеть стенда: {status.network?.cidr || '—'}</p>
+              <p>По SSH доступна только L-MS; W-DC открывается через веб-консоль. Внутренняя сеть стенда: {status.network?.cidr || '—'}</p>
               <div className="font-mono text-gray-500 text-[11px] flex flex-wrap gap-x-3">
                 {Object.entries(status.vms || {})
                   .filter(([role]) => !role.toLowerCase().startsWith('l'))

@@ -1,6 +1,6 @@
 ---
-- name: "Lab 3 - проверка имён Linux-машин"
-  hosts: lms:nfs:pgsql
+- name: "Lab 3 - проверка имени L-MS"
+  hosts: lms
   gather_facts: false
   any_errors_fatal: false
   tasks:
@@ -54,56 +54,8 @@
       changed_when: false
       tags: [windows, storage]
 
-- name: "Lab 3 - проверка узла хранения L-NFS"
-  hosts: nfs
-  become: true
-  become_method: sudo
-  gather_facts: false
-  any_errors_fatal: false
-  vars:
-    required_fw_ports:
-      - "7780/tcp"
-      - "9876/tcp"
-      - "9852/tcp"
-      - "9862/tcp"
-  tasks:
-    - name: "3.1 На L-NFS открыты firewall-порты Acronis"
-      ansible.builtin.command: firewall-cmd --list-ports
-      register: fw_ports
-      changed_when: false
-      failed_when: required_fw_ports | difference(fw_ports.stdout.split()) | length > 0
-      tags: [firewall]
-
-    - name: "3.2 Модуль ядра snapapi загружен на L-NFS"
-      ansible.builtin.shell: "set -o pipefail && lsmod | grep -E '^snapapi\\b'"
-      args:
-        executable: /bin/bash
-      register: snapapi_mod
-      changed_when: false
-      failed_when: snapapi_mod.rc != 0
-      tags: [snapapi]
-
-    - name: "3.3 На L-NFS запущены службы Acronis или Cyber Protect"
-      ansible.builtin.shell: >-
-        set -o pipefail &&
-        systemctl list-units --type=service --state=running --no-legend |
-        awk '{print $1}' | grep -iE 'acronis|cyber.?protect'
-      args:
-        executable: /bin/bash
-      register: acronis_running
-      changed_when: false
-      failed_when: acronis_running.rc != 0 or (acronis_running.stdout | trim | length == 0)
-      tags: [services]
-
-    - name: "3.4 Каталог управляемого хранилища /BackupL существует"
-      ansible.builtin.stat:
-        path: /BackupL
-      register: backupl_dir
-      failed_when: not backupl_dir.stat.exists or not backupl_dir.stat.isdir
-      tags: [storage]
-
 - name: "Lab 3 - структурированный итог"
-  hosts: lms:nfs:pgsql:wdc
+  hosts: lms:wdc
   gather_facts: false
   tasks:
     - name: "4.1 Машина доступна для автоматической проверки"

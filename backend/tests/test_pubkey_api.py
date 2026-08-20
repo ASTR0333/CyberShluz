@@ -4,7 +4,7 @@ from app.api.v1 import pubkey as pubkey_api
 from app.api.v1.pubkey import _linux_targets, _push_pubkey_to_linux_hosts
 
 
-def test_linux_targets_include_every_l_prefixed_vm() -> None:
+def test_linux_targets_include_only_lms() -> None:
     vm_details = json.dumps(
         {
             "L-MS": {"ip": "10.10.0.10", "floating_ip": "203.0.113.10"},
@@ -14,11 +14,7 @@ def test_linux_targets_include_every_l_prefixed_vm() -> None:
         }
     )
 
-    assert _linux_targets(vm_details) == [
-        ("L-MS", "203.0.113.10"),
-        ("l-nfs", "203.0.113.70"),
-        ("L-PGSQL", "203.0.113.55"),
-    ]
+    assert _linux_targets(vm_details) == [("L-MS", "203.0.113.10")]
 
 
 def test_linux_targets_fall_back_to_lms_for_old_stands() -> None:
@@ -26,7 +22,7 @@ def test_linux_targets_fall_back_to_lms_for_old_stands() -> None:
     assert _linux_targets("not-json") == [("L-MS", None)]
 
 
-def test_pubkey_is_installed_over_each_linux_floating_ip(monkeypatch) -> None:
+def test_pubkey_is_installed_only_on_lms(monkeypatch) -> None:
     connections = []
     installations = []
 
@@ -64,16 +60,10 @@ def test_pubkey_is_installed_over_each_linux_floating_ip(monkeypatch) -> None:
         "ssh-ed25519 student-key",
         [
             ("L-MS", "203.0.113.10"),
-            ("L-NFS", "203.0.113.70"),
-            ("L-PGSQL", "203.0.113.55"),
         ],
         max_wait=1,
     )
 
-    assert [call[0] for call in connections] == [
-        "203.0.113.10",
-        "203.0.113.70",
-        "203.0.113.55",
-    ]
-    assert [item[2] for item in installations] == ["L-MS", "L-NFS", "L-PGSQL"]
+    assert [call[0] for call in connections] == ["203.0.113.10"]
+    assert [item[2] for item in installations] == ["L-MS"]
     assert all(client.closed for client in clients.values())

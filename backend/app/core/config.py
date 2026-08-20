@@ -37,12 +37,12 @@ class Settings(BaseSettings):
      
     VM_ADMIN_USER: str = "labadmin"
     VM_STUDENT_USER: str = "student"
-    # Optional one-time credentials for legacy images without cloud-init.
-    # The password is used only to install per-role SSH keys and is disabled
+    # Optional one-time credentials for the legacy L-MS image without cloud-init.
+    # The password is used only to install the L-MS SSH keys and is disabled
     # before a stand is marked READY.
     VM_BOOTSTRAP_USER: str = ""
     VM_BOOTSTRAP_PASSWORD: str = ""
-    # Optional root password for legacy images where the SSH user is not in
+    # Optional root password for legacy L-MS where the SSH user is not in
     # sudoers but can elevate with `su`. Falls back to VM_BOOTSTRAP_PASSWORD.
     VM_BOOTSTRAP_ROOT_PASSWORD: str = ""
     VM_BUILD_TIMEOUT: int = 600

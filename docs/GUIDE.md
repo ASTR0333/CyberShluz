@@ -411,7 +411,7 @@ CyberShluz передаёт cloud-init/Cloudbase-Init через Nova `user_data
 созданные старой версией без маркера SSH-политики, при повторном
 развёртывании создаются заново: изменить `user_data` уже запущенной ВМ нельзя.
 
-В форме можно изменить CIDR, gateway, DHCP pool, DNS, external network, образы, выбрать flavor из списка OpenStack и задать статические IP. DHCP pool не должен пересекаться со статическими IP. L-MS обязательна как компонент лабораторной топологии. Каждая включённая Linux-ВМ получает отдельный Floating IP.
+В форме можно изменить CIDR, gateway, DHCP pool, DNS, external network, образы, выбрать flavor из списка OpenStack и задать статические IP. DHCP pool не должен пересекаться со статическими IP. L-MS обязательна как компонент лабораторной топологии. Floating IP получает только L-MS.
 
 ## 10. Модель SSH-доступа лабораторного стенда
 
@@ -424,8 +424,8 @@ CyberShluz передаёт cloud-init/Cloudbase-Init через Nova `user_data
 
 - root заблокирован;
 - парольная и keyboard-interactive SSH-аутентификация отключена;
-- студент может одним действием добавить личный публичный ключ на все роли с префиксом `L`; приватная часть системе не передаётся;
-- security group разрешает key-only SSH к Floating IP каждой Linux-ВМ;
+- студент может одним действием добавить личный публичный ключ на L-MS; приватная часть системе не передаётся;
+- security group разрешает key-only SSH к Floating IP L-MS;
 - PostgreSQL, NFS и RDP не публикуются напрямую в Интернет;
 - RDP на W-DC и V-HYPERV доступен только во внутренней сети. Для работы с W-DC
   студент поднимает туннель через L-MS:
@@ -449,7 +449,7 @@ OS_DASHBOARD_URL=https://edu.cyber-infrastructure.ru:8800
 Для просмотра консоли браузер может запросить вход в панель КИ. Ручная команда
 выше остаётся резервным способом диагностики.
 
-Для legacy Linux-образов без cloud-init задайте `VM_BOOTSTRAP_USER` и
+Для legacy-образа L-MS без cloud-init задайте `VM_BOOTSTRAP_USER` и
 `VM_BOOTSTRAP_PASSWORD` в серверном `.env`. CyberShluz сначала пытается войти под
 заводским пользователем с Nova-ключом администратора, а заводской пароль использует как
 резервный способ. Если этот пользователь отсутствует в sudoers, bootstrap использует
@@ -458,7 +458,7 @@ OS_DASHBOARD_URL=https://edu.cyber-infrastructure.ru:8800
 ключи, удаляет административные права у студента и отключает парольный SSH.
 Пароль не сохраняется в БД стенда и не возвращается через API.
 
-Перед статусом `READY` шлюз обязательно подключается к каждой Linux-ВМ по её
+Перед статусом `READY` шлюз обязательно подключается к L-MS по её
 Floating IP обоими ключами, проверяет
 `sudo` у администратора и отсутствие `sudo` у студента. Если ни cloud-init, ни
 одноразовый bootstrap не обеспечили эту политику, развёртывание завершается
@@ -469,13 +469,9 @@ Floating IP обоими ключами, проверяет
 
 ### 11.1. Автоматические проверки
 
-- L-MS, L-NFS и L-PGSQL доступны по SSH напрямую через собственные Floating IP;
-- hostname Linux-ВМ точно соответствует роли и домену `.cyberprotect.test`;
+- L-MS доступна по SSH через собственный Floating IP;
+- hostname L-MS точно соответствует роли и домену `.cyberprotect.test`;
 - на L-MS слушает порт веб-консоли `9877`;
-- на L-NFS открыты `7780/tcp`, `9876/tcp`, `9852/tcp`, `9862/tcp`;
-- на L-NFS загружен `snapapi`;
-- на L-NFS запущена служба Acronis/Cyber Protect;
-- на L-NFS существует `/BackupL`;
 - на W-DC через SSH/PowerShell запущены Storage Node Service, Catalog Browser Service и Elasticsearch;
 - на W-DC существует `C:\Backups`.
 

@@ -103,12 +103,6 @@ async def start_check(
             raise ValueError("У L-MS нет Floating IP")
 
         stand_hosts = {"L-MS": {"address": lms_ip}}
-        for role in ("L-NFS", "L-PGSQL"):
-            vm = vm_results.get(role, {})
-            address = vm.get("floating_ip")
-            if not address:
-                raise ValueError(f"У {role} нет Floating IP")
-            stand_hosts[role] = {"address": address}
 
         windows_vm = vm_results.get("W-DC")
         if windows_vm:
@@ -134,7 +128,7 @@ async def start_check(
 
     RESULTS_DB[stand_id_str] = {
         "status": "CHECKING",
-        "log": "Проверка запущена. Выполняются тесты на L-MS и L-NFS...",
+        "log": "Проверка запущена. Выполняются SSH-тесты на L-MS...",
         "details": {}
     }
     stand.last_check_result = json.dumps(RESULTS_DB[stand_id_str], ensure_ascii=False)
@@ -166,9 +160,6 @@ async def start_check(
                 "status": status_value,
                 "log": (
                     "✅ [L-MS] Проверка доступности (Порт 9877) — OK\n"
-                    "✅ [L-NFS] Проверка Hostname (cyberprotect.test) — OK\n"
-                    "✅ [L-NFS] Проверка модуля snapapi — OK\n"
-                    "✅ [L-NFS] Проверка портов Firewall (7780, 9876...) — OK\n"
                     "✅ [W-DC] Проверка служб узла хранения и каталога — OK\n"
                     "✅ Все проверки пройдены успешно."
                 ),

@@ -44,8 +44,8 @@ def get_privkey(stand_id: str, db: Session = Depends(get_db), _=Depends(require_
 
 @router.post(
     "/stand/{stand_id}/pubkey",
-    summary="Добавить SSH-ключ студента на стенд",
-    description="Принимает публичный ключ студента и добавляет его на все Linux-машины стенда.",
+    summary="Добавить SSH-ключ студента на L-MS",
+    description="Принимает публичный ключ студента и добавляет его на L-MS.",
 )
 def add_pubkey(stand_id: str, body: PubkeyRequest, db: Session = Depends(get_db), user=Depends(require_student)):
     stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
@@ -72,19 +72,15 @@ def add_pubkey(stand_id: str, body: PubkeyRequest, db: Session = Depends(get_db)
     ]
     return {
         "message": (
-            "Ключ успешно добавлен на все Linux-машины стенда. "
-            "Подключайтесь к каждой машине напрямую по её Floating IP."
+            "Ключ успешно добавлен на L-MS. "
+            "Подключайтесь к L-MS по её Floating IP."
         ),
         "commands": commands,
     }
 
 
 def _linux_targets(vm_details: str | None) -> list[tuple[str, str | None]]:
-    """Return every L-prefixed VM and its public address.
-
-    Old stands may not have persisted VM details. They still expose L-MS via
-    ``stand.ip_address``, so keep that target as a backwards-compatible fallback.
-    """
+    """Return only the public SSH endpoint supported by the stand: L-MS."""
     try:
         vms = json.loads(vm_details or "{}")
     except (TypeError, json.JSONDecodeError):
@@ -92,13 +88,11 @@ def _linux_targets(vm_details: str | None) -> list[tuple[str, str | None]]:
     if not isinstance(vms, dict):
         vms = {}
 
-    targets = []
-    for role, details in vms.items():
-        if not str(role).lower().startswith("l") or not isinstance(details, dict):
-            continue
-        floating_ip = details.get("floating_ip")
-        targets.append((str(role), str(floating_ip) if floating_ip else None))
-    return targets or [("L-MS", None)]
+    details = vms.get("L-MS")
+    if not isinstance(details, dict):
+        return [("L-MS", None)]
+    floating_ip = details.get("floating_ip")
+    return [("L-MS", str(floating_ip) if floating_ip else None)]
 
 
 def _load_pkey(private_key_str: str):
@@ -176,7 +170,7 @@ def _push_pubkey_to_linux_hosts(
 ):
     user = settings.VM_ADMIN_USER
 
-    print("[pubkey] === Прямая установка ключа на Linux-ВМ стенда ===", flush=True)
+    print("[pubkey] === Установка ключа на L-MS ===", flush=True)
     print(f"[pubkey] Длина приватного ключа: {len(system_private_key)} байт", flush=True)
 
     try:
@@ -208,5 +202,5 @@ def _push_pubkey_to_linux_hosts(
     if errors:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Не удалось добавить ключ на все Linux-машины: " + "; ".join(errors),
+            detail="Не удалось добавить ключ на L-MS: " + "; ".join(errors),
         )

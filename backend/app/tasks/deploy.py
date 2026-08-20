@@ -175,21 +175,7 @@ def deploy_stand_task(
          
         net_details = vm_results.pop("__network__", None)
 
-        linux_vms = {
-            role: vm
-            for role, vm in vm_results.items()
-            if role.upper().startswith("L-")
-        }
-        missing_floating_ips = [
-            role for role, vm in linux_vms.items() if not vm.get("floating_ip")
-        ]
-        if missing_floating_ips:
-            raise CapacityExceededException(
-                "Не удалось получить публичные IP для Linux-ВМ: "
-                + ", ".join(missing_floating_ips)
-            )
-
-        lms = linux_vms.get("L-MS", {})
+        lms = vm_results.get("L-MS", {})
         access_ip = lms.get("floating_ip")
         if not access_ip:
             raise CapacityExceededException("Не удалось получить публичный IP для L-MS")
@@ -203,9 +189,7 @@ def deploy_stand_task(
                 for failed_role in failed_roles
             )
             raise VMProvisioningError("Не все ВМ перешли в ACTIVE: " + details)
-        ssh_bootstrapped = all(
-            vm.get("ssh_bootstrapped", False) for vm in linux_vms.values()
-        )
+        ssh_bootstrapped = lms.get("ssh_bootstrapped", False)
 
         with SessionLocal() as db:
             stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()

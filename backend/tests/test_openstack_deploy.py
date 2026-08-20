@@ -25,7 +25,7 @@ def test_logical_slot_uses_its_openstack_project_name(monkeypatch) -> None:
     assert "project_id" not in connection_kwargs
 
 
-def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) -> None:
+def test_only_lms_gets_floating_ip_and_ssh_bootstrap(monkeypatch) -> None:
     create_server_calls = []
     floating_ip_calls = []
     bootstrap_calls = []
@@ -73,11 +73,7 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
     )
     def assign_floating_ip(_conn, server_id, _external_network, _reserved_ips):
         floating_ip_calls.append(server_id)
-        return {
-            "stand1-L-MS": "203.0.113.10",
-            "stand1-L-NFS": "203.0.113.70",
-            "stand1-L-PGSQL": "203.0.113.55",
-        }[server_id]
+        return {"stand1-L-MS": "203.0.113.10"}[server_id]
 
     monkeypatch.setattr(client, "_assign_floating_ip", assign_floating_ip)
     monkeypatch.setattr(
@@ -112,15 +108,11 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
     ]
     assert all(data.startswith("#cloud-config") for data in decoded_user_data)
     assert all("name: labadmin" in data for data in decoded_user_data)
-    assert floating_ip_calls == ["stand1-L-MS", "stand1-L-NFS", "stand1-L-PGSQL"]
+    assert floating_ip_calls == ["stand1-L-MS"]
     assert result["L-MS"]["floating_ip"] == "203.0.113.10"
-    assert result["L-NFS"]["floating_ip"] == "203.0.113.70"
-    assert result["L-PGSQL"]["floating_ip"] == "203.0.113.55"
-    assert bootstrap_calls == [
-        ("L-MS", "203.0.113.10"),
-        ("L-NFS", "203.0.113.70"),
-        ("L-PGSQL", "203.0.113.55"),
-    ]
+    assert "floating_ip" not in result["L-NFS"]
+    assert "floating_ip" not in result["L-PGSQL"]
+    assert bootstrap_calls == [("L-MS", "203.0.113.10")]
 
 
 def test_active_server_with_obsolete_ssh_policy_is_recreated(monkeypatch) -> None:
