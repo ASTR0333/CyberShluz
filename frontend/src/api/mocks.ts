@@ -153,7 +153,7 @@ export const mockApi = {
     }),
 
   createRdpSession: (stand_id: string): Promise<RdpSessionResponse> =>
-    apiFetch(`/stand/${stand_id}/rdp-session`, { method: 'POST' }, 30_000),
+    apiFetch(`/stand/${stand_id}/rdp-session`, { method: 'POST' }, 105_000),
 
 
   getStands: (): Promise<StudentStand[]> => apiFetch('/admin/stands'),

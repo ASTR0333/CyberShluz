@@ -13,6 +13,7 @@ import logging
 import select
 import socket
 import threading
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Callable
@@ -35,6 +36,53 @@ def _load_private_key(private_key: str):
         except Exception:
             continue
     raise RDPGatewayError("Ключ доступа к L-MS имеет неподдерживаемый формат")
+
+
+def _wait_for_rdp(transport: paramiko.Transport, target_host: str) -> None:
+    """Wait briefly for Windows RDP after Nova reports the VM as ACTIVE."""
+    ready_timeout = max(1, int(settings.RDP_READY_TIMEOUT_SECONDS))
+    attempt_timeout = max(1, int(settings.RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS))
+    deadline = time.monotonic() + ready_timeout
+    last_error: Exception | None = None
+
+    while True:
+        if not transport.is_active():
+            raise RDPGatewayError("SSH-соединение с L-MS завершилось во время ожидания W-DC")
+
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        try:
+            probe = transport.open_channel(
+                "direct-tcpip",
+                (target_host, 3389),
+                ("127.0.0.1", 0),
+                timeout=min(float(attempt_timeout), remaining),
+            )
+            probe.close()
+            return
+        except paramiko.ChannelException as exc:
+            # SSH_OPEN_ADMINISTRATIVELY_PROHIBITED is a configuration error on
+            # L-MS and cannot become healthy by waiting for Windows to boot.
+            if exc.code == 1:
+                raise RDPGatewayError(
+                    "SSH-сервер L-MS запрещает TCP-перенаправление (AllowTcpForwarding)"
+                ) from exc
+            last_error = exc
+        except (OSError, paramiko.SSHException) as exc:
+            # A filtered/not-yet-open Windows port is commonly surfaced by
+            # Paramiko as the generic "Timeout opening channel" exception.
+            last_error = exc
+
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            time.sleep(min(2.0, remaining))
+
+    detail = f": {last_error}" if last_error else ""
+    raise RDPGatewayError(
+        f"W-DC не отвечает на порту RDP 3389 через L-MS "
+        f"в течение {ready_timeout} с{detail}"
+    )
 
 
 @dataclass
@@ -143,10 +191,9 @@ class RDPTunnelBroker:
 
             # Fail while the student is still on the CyberShluz page instead
             # of opening a Guacamole tab which can only show a generic error.
-            probe = transport.open_channel(
-                "direct-tcpip", (wdc_ip, 3389), ("127.0.0.1", 0), timeout=10
-            )
-            probe.close()
+            # Windows may still be booting after Nova reports it as ACTIVE, so
+            # readiness is retried within a bounded interval.
+            _wait_for_rdp(transport, wdc_ip)
 
             listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

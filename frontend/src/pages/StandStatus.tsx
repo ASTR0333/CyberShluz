@@ -253,14 +253,21 @@ export const StandStatus = () => {
       return;
     }
     tab.opener = null;
+    tab.document.title = 'Подключение к W-DC';
+    tab.document.body.style.cssText = 'margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#e5e7eb;font:16px system-ui,sans-serif';
+    const popupStatus = tab.document.createElement('p');
+    popupStatus.textContent = 'Ожидание готовности RDP на W-DC…';
+    tab.document.body.replaceChildren(popupStatus);
     setIsOpeningRdp(true);
     try {
       const session = await mockApi.createRdpSession(standId);
       tab.location.replace(session.launch_url);
       toast.success('Веб-сессия W-DC открыта в новой вкладке');
     } catch (err: unknown) {
-      tab.close();
-      toast.error(err instanceof Error ? err.message : 'Не удалось открыть W-DC');
+      const message = err instanceof Error ? err.message : 'Не удалось открыть W-DC';
+      popupStatus.textContent = message;
+      popupStatus.style.color = '#fca5a5';
+      toast.error(message);
     } finally {
       setIsOpeningRdp(false);
     }

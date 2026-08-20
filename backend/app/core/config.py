@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     GUACAMOLE_JSON_SECRET_KEY: str = ""
     RDP_TUNNEL_HOST: str = "backend"
     RDP_TUNNEL_WAIT_SECONDS: int = 120
+    # Nova's ACTIVE state only means that the hypervisor started the VM.  A
+    # Windows guest can need some additional time before TermService accepts
+    # connections, so the web gateway performs bounded readiness retries.
+    RDP_READY_TIMEOUT_SECONDS: int = 45
+    RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS: int = 8
     RDP_SESSION_TOKEN_TTL_SECONDS: int = 120
     RDP_MAX_SESSIONS: int = 32
     WDC_RDP_DOMAIN: str = "cyberprotect"
