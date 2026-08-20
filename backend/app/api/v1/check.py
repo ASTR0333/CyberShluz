@@ -11,7 +11,6 @@ from app.core.database import get_db, SessionLocal
 from app.core.models import Stand, StandStatusEnum
 from app.core.security import assert_stand_owner_or_teacher, require_student
 from app.services.checker_service import CheckerService
-from app.tasks.deploy import cleanup_stand_task
 from app.core.config import settings
 
 RESULTS_DB: dict[str, dict] = {}
@@ -20,10 +19,13 @@ router = APIRouter()
 logger = logging.getLogger(__name__)
 
 MANUAL_CHECKS = {
-    "w_dc_services": "На W-DC запущены Storage Node Service, Catalog Browser Service и Elasticsearch",
     "w_dc_registered": "w-dc.cyberprotect.test отображается в списке узлов хранения",
     "repositories_present": "Хранилища RepoW и RepoL созданы и отображаются в веб-консоли",
 }
+# Older frontend tabs may still send this confirmation. It is accepted for
+# compatibility, but no longer affects the result because W-DC services are
+# now checked automatically over SSH.
+IGNORED_CONFIRMATIONS = {"w_dc_services"}
 
 
 def push_lti_grade(stand_id: str, score_given: float = 100.0) -> None:
@@ -85,6 +87,12 @@ async def start_check(
         raise HTTPException(status_code=404, detail="Стенд не найден")
     assert_stand_owner_or_teacher(user, stand.user_id)
 
+    if stand.status != StandStatusEnum.READY:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Проверку можно запускать только для готового стенда (текущий статус: {stand.status.value})",
+        )
+
     if not stand.vm_details:
         raise HTTPException(status_code=400, detail="Стенд еще не развернут (нет данных о ВМ)")
 
@@ -95,7 +103,7 @@ async def start_check(
             raise ValueError("У L-MS нет Floating IP")
 
         stand_hosts = {"L-MS": {"address": lms_ip}}
-        for role in ("L-NFS", "L-PGSQL"):
+        for role in ("L-NFS", "L-PGSQL", "W-DC"):
             vm = vm_results.get(role, {})
             address = vm.get("ip") or vm.get("expected_ip")
             if not address:
@@ -106,7 +114,7 @@ async def start_check(
         raise HTTPException(status_code=400, detail=f"Ошибка топологии для проверки: {e}")
 
     confirmations = set(request.manual_confirmations)
-    unknown_confirmations = confirmations - set(MANUAL_CHECKS)
+    unknown_confirmations = confirmations - set(MANUAL_CHECKS) - IGNORED_CONFIRMATIONS
     if unknown_confirmations:
         raise HTTPException(
             status_code=422,
@@ -154,6 +162,7 @@ async def start_check(
                     "✅ [L-NFS] Проверка Hostname (cyberprotect.test) — OK\n"
                     "✅ [L-NFS] Проверка модуля snapapi — OK\n"
                     "✅ [L-NFS] Проверка портов Firewall (7780, 9876...) — OK\n"
+                    "✅ [W-DC] Проверка служб узла хранения и каталога — OK\n"
                     "✅ Все проверки пройдены успешно."
                 ),
                 "details": {
@@ -161,6 +170,7 @@ async def start_check(
                     "port_9877_open": True,
                     "snapapi_loaded": True,
                     "acronis_active": True,
+                    "windows_services_active": True,
                     "manual_confirmed": not missing_manual,
                 }
             }
@@ -212,16 +222,8 @@ async def start_check(
                         if db_stand:
                             db_stand.last_check_result = json.dumps(check_data, ensure_ascii=False)
                             if result.status == "PASSED":
-                                 
-                                db_stand.status = StandStatusEnum.CLEANING
                                 db_session.commit()
-                                logger.info("Stand %s PASSED. Triggering cleanup.", stand_id)
-                                try:
-                                    cleanup_stand_task.delay(stand_id_str)
-                                except Exception:
-                                    db_stand.status = StandStatusEnum.READY
-                                    db_session.commit()
-                                    raise
+                                logger.info("Stand %s PASSED. Keeping it READY until explicit cleanup.", stand_id)
                                 push_lti_grade(stand_id_str, score_given=100.0)
                             else:
                                 db_session.commit()

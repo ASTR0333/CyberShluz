@@ -627,8 +627,12 @@ net user labadmin $adminPassword /add /y
 net localgroup Administrators labadmin /add
 net user student $studentPassword /add /y
 net localgroup Administrators student /delete 2>$null
-Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 1
-Disable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue
+# W-DC and V-HYPERV have no Floating IP. RDP is therefore reachable only from
+# the isolated stand network (normally through an SSH tunnel via L-MS).
+Set-ItemProperty -Path 'HKLM:\\System\\CurrentControlSet\\Control\\Terminal Server' -Name fDenyTSConnections -Value 0
+Enable-NetFirewallRule -DisplayGroup 'Remote Desktop' -ErrorAction SilentlyContinue
+Set-Service -Name TermService -StartupType Automatic -ErrorAction SilentlyContinue
+Start-Service -Name TermService -ErrorAction SilentlyContinue
 
 if (-not (Get-Service sshd -ErrorAction SilentlyContinue)) {{
     Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0

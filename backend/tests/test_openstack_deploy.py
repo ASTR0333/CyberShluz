@@ -90,6 +90,19 @@ def test_server_is_created_directly_from_image(monkeypatch) -> None:
     assert result["L-MS"]["floating_ip"] == "203.0.113.10"
 
 
+def test_windows_user_data_enables_rdp_only_for_tunnelled_private_access() -> None:
+    user_data = OpenStackClient.build_user_data(
+        "W-DC",
+        "ssh-ed25519 admin-key",
+        "ssh-ed25519 student-key",
+    )
+
+    assert "fDenyTSConnections -Value 0" in user_data
+    assert "Enable-NetFirewallRule -DisplayGroup 'Remote Desktop'" in user_data
+    assert "Start-Service -Name TermService" in user_data
+    assert "Disable-NetFirewallRule -DisplayGroup 'Remote Desktop'" not in user_data
+
+
 def test_all_servers_share_one_build_deadline(monkeypatch) -> None:
     class Clock:
         now = 0.0

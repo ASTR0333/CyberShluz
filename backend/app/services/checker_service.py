@@ -152,7 +152,7 @@ class CheckerService:
     ) -> str:
         """Build a role-aware inventory; private hosts are reached through L-MS."""
         groups: dict[str, dict] = {}
-        role_groups = {"L-MS": "lms", "L-NFS": "nfs", "L-PGSQL": "pgsql"}
+        role_groups = {"L-MS": "lms", "L-NFS": "nfs", "L-PGSQL": "pgsql", "W-DC": "wdc"}
         for role, group_name in role_groups.items():
             host = stand_hosts.get(role)
             if not host or not host.get("address"):
@@ -163,6 +163,13 @@ class CheckerService:
                 "expected_hostname": role.lower() + ".cyberprotect.test",
             }
             proxy_jump = host.get("proxy_jump")
+            if role == "W-DC":
+                host_vars.update(
+                    {
+                        "ansible_connection": "ssh",
+                        "ansible_shell_type": "powershell",
+                    }
+                )
             if proxy_jump:
                 host_vars.update(
                     {
@@ -200,6 +207,12 @@ class CheckerService:
         passed = 0
         failed = 0
 
+        def record_detail(key: str, value: bool) -> None:
+            # Some checks (notably hostname) run for several hosts under one
+            # task name. One successful host must not hide another host's
+            # failure in the aggregate result shown in the UI.
+            details[key] = details.get(key, True) and value
+
         try:
             json_start = stdout.find("{")
             if json_start == -1:
@@ -236,15 +249,21 @@ class CheckerService:
                          
                         tn = task_name.lower()
                         if "9877" in tn:
-                            details["port_9877_open"] = not is_failed
+                            record_detail("port_9877_open", not is_failed)
                         if "snapapi" in tn:
-                            details["snapapi_loaded"] = not is_failed
-                        if "acronis" in tn:
-                            details["acronis_active"] = not is_failed
-                        if "firewall" in tn or "nfs" in tn:
-                            details["firewall_ok"] = not is_failed
+                            record_detail("snapapi_loaded", not is_failed)
+                        if "служб" in tn and ("acronis" in tn or "cyber protect" in tn):
+                            record_detail("acronis_active", not is_failed)
+                        if "firewall" in tn:
+                            record_detail("firewall_ok", not is_failed)
                         if "hostname" in tn or "имя хоста" in tn:
-                            details["hostname_ok"] = not is_failed
+                            record_detail("hostname_ok", not is_failed)
+                        if "/backupl" in tn:
+                            record_detail("storage_directory_ok", not is_failed)
+                        if "windows-служб" in tn:
+                            record_detail("windows_services_active", not is_failed)
+                        if "c:\\backups" in tn:
+                            record_detail("windows_storage_directory_ok", not is_failed)
 
             status = "PASSED" if returncode == 0 and failed == 0 else "FAILED"
             log_lines.append("")

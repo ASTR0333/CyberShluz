@@ -13,6 +13,7 @@ def test_inventory_uses_lms_as_bastion(tmp_path: Path) -> None:
             "L-MS": {"address": "203.0.113.10"},
             "L-NFS": {"address": "10.10.0.70", "proxy_jump": "203.0.113.10"},
             "L-PGSQL": {"address": "10.10.0.55", "proxy_jump": "203.0.113.10"},
+            "W-DC": {"address": "10.10.0.5", "proxy_jump": "203.0.113.10"},
         },
         "labadmin",
         str(key_path),
@@ -23,6 +24,10 @@ def test_inventory_uses_lms_as_bastion(tmp_path: Path) -> None:
         assert nfs["ansible_host"] == "10.10.0.70"
         assert "ProxyJump=labadmin@203.0.113.10" in nfs["ansible_ssh_common_args"]
         assert nfs["expected_hostname"] == "l-nfs.cyberprotect.test"
+        wdc = inventory["all"]["children"]["wdc"]["hosts"]["w-dc"]
+        assert wdc["ansible_host"] == "10.10.0.5"
+        assert wdc["ansible_shell_type"] == "powershell"
+        assert "ProxyJump=labadmin@203.0.113.10" in wdc["ansible_ssh_common_args"]
     finally:
         os.unlink(inventory_path)
 
@@ -50,3 +55,83 @@ def test_ansible_parser_fails_when_nfs_is_unreachable() -> None:
     assert result["status"] == "FAILED"
     assert result["details"]["ssh_accessible"] is False
     assert result["details"]["snapapi_loaded"] is False
+
+
+def test_ansible_parser_does_not_hide_one_failed_hostname() -> None:
+    stdout = json.dumps(
+        {
+            "plays": [
+                {
+                    "play": {"name": "Lab 3"},
+                    "tasks": [
+                        {
+                            "task": {"name": "1.1 Hostname точно соответствует роли"},
+                            "hosts": {
+                                "l-ms": {"failed": True, "msg": "wrong hostname"},
+                                "l-nfs": {"changed": False},
+                                "l-pgsql": {"changed": False},
+                            },
+                        }
+                    ],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    result = CheckerService()._parse_ansible_json(stdout, "", 2)
+
+    assert result["status"] == "FAILED"
+    assert result["details"]["hostname_ok"] is False
+
+
+def test_nfs_storage_task_does_not_overwrite_firewall_result() -> None:
+    stdout = json.dumps(
+        {
+            "plays": [
+                {
+                    "play": {"name": "Lab 3"},
+                    "tasks": [
+                        {
+                            "task": {"name": "3.1 На L-NFS открыты firewall-порты Acronis"},
+                            "hosts": {"l-nfs": {"failed": True}},
+                        },
+                        {
+                            "task": {"name": "3.4 Каталог управляемого хранилища /BackupL существует"},
+                            "hosts": {"l-nfs": {"changed": False}},
+                        },
+                    ],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    result = CheckerService()._parse_ansible_json(stdout, "", 2)
+
+    assert result["details"]["firewall_ok"] is False
+    assert result["details"]["storage_directory_ok"] is True
+
+
+def test_ansible_parser_reports_windows_service_result() -> None:
+    stdout = json.dumps(
+        {
+            "plays": [
+                {
+                    "play": {"name": "Lab 3 W-DC"},
+                    "tasks": [
+                        {
+                            "task": {"name": "2.2 Требуемые Windows-службы запущены на W-DC"},
+                            "hosts": {"w-dc": {"failed": True, "msg": "Elasticsearch"}},
+                        }
+                    ],
+                }
+            ]
+        },
+        ensure_ascii=False,
+    )
+
+    result = CheckerService()._parse_ansible_json(stdout, "", 2)
+
+    assert result["status"] == "FAILED"
+    assert result["details"]["windows_services_active"] is False

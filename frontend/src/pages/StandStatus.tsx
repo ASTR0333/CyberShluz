@@ -11,10 +11,12 @@ import {
 import toast from 'react-hot-toast';
 
 const MANUAL_CHECKS = [
-  ['w_dc_services', 'На W-DC запущены Storage Node Service, Catalog Browser Service и Elasticsearch'],
   ['w_dc_registered', 'w-dc.cyberprotect.test отображается в списке узлов хранения'],
   ['repositories_present', 'Хранилища RepoW и RepoL созданы и отображаются в веб-консоли'],
 ] as const;
+
+const CHECK_POLL_INTERVAL_MS = 2000;
+const CHECK_POLL_TIMEOUT_MS = 150000;
 
 
 
@@ -174,14 +176,23 @@ export const StandStatus = () => {
     setCheckResult(null);
     try {
       await mockApi.check(standId, manualConfirmations);
-      await new Promise(r => setTimeout(r, 4000));
-      const result = await mockApi.getCheckResult(standId);
-      setCheckResult(result);
-      if (result.status === 'PASSED') toast.success('Все проверки пройдены! Стенд отправлен на очистку.');
+      const deadline = Date.now() + CHECK_POLL_TIMEOUT_MS;
+      let result: CheckResultResponse;
+      do {
+        await new Promise((resolve) => setTimeout(resolve, CHECK_POLL_INTERVAL_MS));
+        result = await mockApi.getCheckResult(standId);
+        setCheckResult(result);
+        if (result.status !== 'CHECKING') break;
+      } while (Date.now() < deadline);
+
+      if (result.status === 'CHECKING') {
+        throw new Error('Проверка выполняется дольше ожидаемого. Повторите запрос результата позже.');
+      }
+      if (result.status === 'PASSED') toast.success('Все проверки пройдены! Результат сохранён.');
       else if (result.status === 'REVIEW_REQUIRED') toast('Автопроверка пройдена. Подтвердите ручные пункты и повторите проверку.');
       else toast.error('Обнаружены проблемы — изучите лог');
-    } catch {
-      toast.error('Ошибка проверки');
+    } catch (err: unknown) {
+      toast.error(err instanceof Error ? err.message : 'Ошибка проверки');
     } finally {
       setIsChecking(false);
     }
@@ -291,6 +302,12 @@ export const StandStatus = () => {
   const isFrozen = status.status === 'FREEZE';
   const sshUser = 'student';
   const sshCmd = status.ip_address ? `ssh ${sshUser}@${status.ip_address}` : null;
+  const lmsInternalIp = status.vms?.['L-MS']?.ip || status.vms?.['L-MS']?.expected_ip;
+  const wdcInternalIp = status.vms?.['W-DC']?.ip || status.vms?.['W-DC']?.expected_ip;
+  const managementUrl = status.ip_address ? `https://${status.ip_address}:9877` : null;
+  const rdpTunnelCmd = status.ip_address && wdcInternalIp
+    ? `ssh -L 13389:${wdcInternalIp}:3389 ${sshUser}@${status.ip_address}`
+    : null;
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -423,7 +440,7 @@ export const StandStatus = () => {
               {isChecking
                 ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                 : <ShieldCheck className="w-5 h-5 mr-2 text-cyber-blue-light" />}
-              Завершить и проверить
+              Проверить лабораторную
             </button>
 
             <button
@@ -565,6 +582,34 @@ export const StandStatus = () => {
                   .filter(([role]) => role !== 'L-MS')
                   .map(([role, vm]) => <span key={role}>{role}: {vm.ip || vm.expected_ip}</span>)}
               </div>
+            </div>
+
+            <div className="pt-4 border-t border-gray-700 space-y-3 text-xs">
+              <p className="font-bold text-gray-300 uppercase tracking-wider">Работа по методичке</p>
+              {lmsInternalIp && (
+                <p className="text-gray-400">
+                  Вместо адреса <span className="font-mono">10.0.0.10</span> из методички используйте фактический IP L-MS:{' '}
+                  <span className="font-mono text-cyber-blue-light">{lmsInternalIp}</span>.
+                </p>
+              )}
+              {managementUrl && (
+                <div>
+                  <p className="text-gray-400 mb-1">Веб-консоль Кибер Бэкап с вашего компьютера</p>
+                  <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center gap-2">
+                    <code className="text-cyber-blue-light text-[11px] break-all">{managementUrl}</code>
+                    <button onClick={() => copyToClipboard(managementUrl)} className="text-gray-400 hover:text-white flex-shrink-0"><Copy size={12} /></button>
+                  </div>
+                </div>
+              )}
+              {rdpTunnelCmd && (
+                <div>
+                  <p className="text-gray-400 mb-1">Доступ к W-DC: запустите туннель, затем откройте RDP на localhost:13389</p>
+                  <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center gap-2">
+                    <code className="text-cyber-blue-light text-[11px] break-all">{rdpTunnelCmd}</code>
+                    <button onClick={() => copyToClipboard(rdpTunnelCmd)} className="text-gray-400 hover:text-white flex-shrink-0"><Copy size={12} /></button>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         </div>

@@ -24,6 +24,36 @@
         timeout: 8
       tags: [management, web]
 
+- name: "Lab 3 - проверка узла хранения W-DC"
+  hosts: wdc
+  gather_facts: false
+  any_errors_fatal: false
+  tasks:
+    - name: "2.2 Требуемые Windows-службы запущены на W-DC"
+      ansible.builtin.raw: |
+        $required = @('Storage Node', 'Catalog Browser', 'Elasticsearch')
+        $running = @(Get-Service | Where-Object { $_.Status -eq 'Running' } | ForEach-Object { $_.DisplayName })
+        $missing = @()
+        foreach ($expected in $required) {
+          if (-not ($running -match [regex]::Escape($expected))) { $missing += $expected }
+        }
+        if ($missing.Count -gt 0) {
+          Write-Error ('Не запущены службы: ' + ($missing -join ', '))
+          exit 1
+        }
+        Write-Output ($running -join "`n")
+      changed_when: false
+      tags: [windows, services]
+
+    - name: "2.3 Каталог управляемого хранилища C:\\Backups существует на W-DC"
+      ansible.builtin.raw: |
+        if (-not (Test-Path -LiteralPath 'C:\Backups' -PathType Container)) {
+          Write-Error 'Каталог C:\Backups не найден'
+          exit 1
+        }
+      changed_when: false
+      tags: [windows, storage]
+
 - name: "Lab 3 - проверка узла хранения L-NFS"
   hosts: nfs
   become: true
@@ -73,7 +103,7 @@
       tags: [storage]
 
 - name: "Lab 3 - структурированный итог"
-  hosts: lms:nfs:pgsql
+  hosts: lms:nfs:pgsql:wdc
   gather_facts: false
   tasks:
     - name: "4.1 Машина доступна для автоматической проверки"
