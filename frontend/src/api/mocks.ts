@@ -12,6 +12,7 @@ import type {
   StudentStand,
   DeploymentOptions,
   MyStandSummary,
+  RdpSessionResponse,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
@@ -51,10 +52,10 @@ export function clearAuth() {
 
 
 
-async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
+async function apiFetch<T>(url: string, options?: RequestInit, timeoutMs = 15_000): Promise<T> {
   const auth = getAuth();
   const timeoutController = new AbortController();
-  const timeoutId = window.setTimeout(() => timeoutController.abort(), 15_000);
+  const timeoutId = window.setTimeout(() => timeoutController.abort(), timeoutMs);
   if (options?.signal) {
     if (options.signal.aborted) timeoutController.abort(options.signal.reason);
     else options.signal.addEventListener('abort', () => timeoutController.abort(options.signal?.reason), { once: true });
@@ -71,7 +72,7 @@ async function apiFetch<T>(url: string, options?: RequestInit): Promise<T> {
     res = await fetch(`${API_BASE_URL}${url}`, { ...options, headers, signal: timeoutController.signal });
   } catch (error) {
     if (timeoutController.signal.aborted && !options?.signal?.aborted) {
-      throw new Error('Сервер не ответил за 15 секунд', { cause: error });
+      throw new Error(`Сервер не ответил за ${Math.ceil(timeoutMs / 1000)} секунд`, { cause: error });
     }
     throw error;
   } finally {
@@ -150,6 +151,9 @@ export const mockApi = {
       method: 'POST',
       body: JSON.stringify(req),
     }),
+
+  createRdpSession: (stand_id: string): Promise<RdpSessionResponse> =>
+    apiFetch(`/stand/${stand_id}/rdp-session`, { method: 'POST' }, 30_000),
 
 
   getStands: (): Promise<StudentStand[]> => apiFetch('/admin/stands'),

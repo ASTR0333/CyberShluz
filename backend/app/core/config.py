@@ -48,6 +48,17 @@ class Settings(BaseSettings):
     SSH_BOOTSTRAP_TIMEOUT: int = 240
     DEPLOYMENT_STALE_TIMEOUT: int = 1200
 
+    # Browser RDP gateway. The JSON key is shared only with the internal
+    # Guacamole container and must be exactly 16 bytes encoded as 32 hex chars.
+    GUACAMOLE_JSON_SECRET_KEY: str = ""
+    RDP_TUNNEL_HOST: str = "backend"
+    RDP_TUNNEL_WAIT_SECONDS: int = 120
+    RDP_SESSION_TOKEN_TTL_SECONDS: int = 120
+    RDP_MAX_SESSIONS: int = 32
+    WDC_RDP_DOMAIN: str = "cyberprotect"
+    WDC_RDP_USERNAME: str = "administrator"
+    WDC_RDP_PASSWORD: str = "Pa$$w0rd"
+
      
     JWT_SECRET_KEY: str = "change-me-in-env"
     JWT_ALGORITHM: str = "HS256"

@@ -43,6 +43,14 @@ random_secret() {
     fi
 }
 
+random_hex_16() {
+    if command -v openssl >/dev/null 2>&1; then
+        openssl rand -hex 16
+    else
+        od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
+    fi
+}
+
 if [[ -f "${ENV_FILE}" ]]; then
     read -r -p "${ENV_FILE} already exists. Replace it? [y/N]: " confirm
     [[ "${confirm}" =~ ^[Yy]$ ]] || exit 0
@@ -74,6 +82,7 @@ ask MAX_CLUSTER_UTILIZATION "Maximum projected cluster utilization (0..1)" "$(re
 DB_PASSWORD="$(read_existing DB_PASSWORD "$(random_secret)")"
 JWT_SECRET_KEY="$(read_existing JWT_SECRET_KEY "$(random_secret)")"
 MOODLE_SHARED_SECRET="$(read_existing MOODLE_SHARED_SECRET "$(random_secret)")"
+GUACAMOLE_JSON_SECRET_KEY="$(read_existing GUACAMOLE_JSON_SECRET_KEY "$(random_hex_16)")"
 
 for required in OS_PROJECT_NAME OS_USERNAME OS_PASSWORD; do
     [[ -n "${!required}" ]] || { echo "${required} must not be empty" >&2; exit 2; }
@@ -90,6 +99,7 @@ umask 077
     printf 'DB_PASSWORD=%s\n' "${DB_PASSWORD}"
     printf 'JWT_SECRET_KEY=%s\n' "${JWT_SECRET_KEY}"
     printf 'MOODLE_SHARED_SECRET=%s\n' "${MOODLE_SHARED_SECRET}"
+    printf 'GUACAMOLE_JSON_SECRET_KEY=%s\n' "${GUACAMOLE_JSON_SECRET_KEY}"
     printf 'OS_AUTH_URL=%s\n' "${OS_AUTH_URL}"
     printf 'OS_PROJECT_NAME=%s\n' "${OS_PROJECT_NAME}"
     printf 'OS_USERNAME=%s\n' "${OS_USERNAME}"

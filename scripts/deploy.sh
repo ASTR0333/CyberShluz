@@ -132,6 +132,29 @@ prepare_docker
     echo "${ENV_FILE} does not exist. Run ./scripts/configure.sh --env-file ${ENV_FILE}" >&2
     exit 1
 }
+
+ensure_guacamole_key() {
+    local existing="" generated=""
+    existing="$(grep -E '^GUACAMOLE_JSON_SECRET_KEY=' "${ENV_FILE}" | tail -1 | cut -d= -f2- || true)"
+    if [[ -n "${existing}" ]]; then
+        [[ "${existing}" =~ ^[[:xdigit:]]{32}$ ]] || {
+            echo "GUACAMOLE_JSON_SECRET_KEY in ${ENV_FILE} must contain exactly 32 hexadecimal characters." >&2
+            exit 2
+        }
+        return
+    fi
+    if command -v openssl >/dev/null 2>&1; then
+        generated="$(openssl rand -hex 16)"
+    else
+        generated="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
+    fi
+    umask 077
+    printf '\nGUACAMOLE_JSON_SECRET_KEY=%s\n' "${generated}" >>"${ENV_FILE}"
+    chmod 600 "${ENV_FILE}"
+    echo "Generated GUACAMOLE_JSON_SECRET_KEY in ${ENV_FILE}."
+}
+
+ensure_guacamole_key
 if [[ -z "${PROJECT_NAME}" ]]; then
     PROJECT_NAME="$(grep -E '^COMPOSE_PROJECT_NAME=' "${ENV_FILE}" | tail -1 | cut -d= -f2- || true)"
     PROJECT_NAME="${PROJECT_NAME:-cybershluz}"

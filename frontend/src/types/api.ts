@@ -84,6 +84,11 @@ export interface MyStandSummary {
   created_at: string | null;
 }
 
+export interface RdpSessionResponse {
+  launch_url: string;
+  expires_at: number;
+}
+
 export interface CheckResponse {
   stand_id: string;
   check_task_id: string;

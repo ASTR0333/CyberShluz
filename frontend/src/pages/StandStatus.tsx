@@ -6,7 +6,7 @@ import { ProgressBadge } from '../components/ProgressBadge';
 import { StandTerminal } from '../components/StandTerminal';
 import {
   ShieldCheck, Loader2, Globe, Clock, Terminal as TerminalIcon,
-  Info, Snowflake, Trash2, Server, Monitor, Copy, Rocket, Key, CheckCircle2
+  Info, Snowflake, Trash2, Server, Monitor, Copy, Rocket, Key, CheckCircle2, MonitorPlay
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
@@ -109,6 +109,7 @@ export const StandStatus = () => {
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
   const [keySubmitted, setKeySubmitted] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
+  const [isOpeningRdp, setIsOpeningRdp] = useState(false);
   const [manualConfirmations, setManualConfirmations] = useState<string[]>([]);
   const [myStands, setMyStands] = useState<MyStandSummary[]>([]);
 
@@ -241,6 +242,27 @@ export const StandStatus = () => {
       toast.error(err instanceof Error ? err.message : 'Ошибка отправки ключа');
     } finally {
       setIsSubmittingKey(false);
+    }
+  };
+
+  const handleOpenWdc = async () => {
+    if (!standId) return;
+    const tab = window.open('about:blank', '_blank');
+    if (!tab) {
+      toast.error('Браузер заблокировал новую вкладку. Разрешите всплывающие окна для CyberShluz.');
+      return;
+    }
+    tab.opener = null;
+    setIsOpeningRdp(true);
+    try {
+      const session = await mockApi.createRdpSession(standId);
+      tab.location.replace(session.launch_url);
+      toast.success('Веб-сессия W-DC открыта в новой вкладке');
+    } catch (err: unknown) {
+      tab.close();
+      toast.error(err instanceof Error ? err.message : 'Не удалось открыть W-DC');
+    } finally {
+      setIsOpeningRdp(false);
     }
   };
 
@@ -453,6 +475,17 @@ export const StandStatus = () => {
             </button>
 
             <button
+              onClick={handleOpenWdc}
+              disabled={status.status !== 'READY' || !wdcInternalIp || isOpeningRdp}
+              className="flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
+            >
+              {isOpeningRdp
+                ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
+                : <MonitorPlay className="w-5 h-5 mr-2" />}
+              Открыть W-DC
+            </button>
+
+            <button
               onClick={handleFreeze}
               disabled={!isActive || isFreezing}
               className="flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
@@ -603,7 +636,7 @@ export const StandStatus = () => {
               )}
               {rdpTunnelCmd && (
                 <div>
-                  <p className="text-gray-400 mb-1">Доступ к W-DC: запустите туннель, затем откройте RDP на localhost:13389</p>
+                  <p className="text-gray-400 mb-1">Резервный ручной доступ к W-DC: запустите туннель, затем откройте RDP на localhost:13389</p>
                   <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center gap-2">
                     <code className="text-cyber-blue-light text-[11px] break-all">{rdpTunnelCmd}</code>
                     <button onClick={() => copyToClipboard(rdpTunnelCmd)} className="text-gray-400 hover:text-white flex-shrink-0"><Copy size={12} /></button>
