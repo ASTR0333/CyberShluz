@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     OS_PROJECT_DOMAIN_NAME: str = "Default"
     OS_REGION_NAME: str = "RegionOne"
     OS_NETWORK_NAME: str = "Public"
+    OS_DASHBOARD_URL: str = "https://edu.cyber-infrastructure.ru:8800"
 
      
      
@@ -47,22 +48,6 @@ class Settings(BaseSettings):
     VM_BUILD_TIMEOUT: int = 600
     SSH_BOOTSTRAP_TIMEOUT: int = 240
     DEPLOYMENT_STALE_TIMEOUT: int = 1200
-
-    # Browser RDP gateway. The JSON key is shared only with the internal
-    # Guacamole container and must be exactly 16 bytes encoded as 32 hex chars.
-    GUACAMOLE_JSON_SECRET_KEY: str = ""
-    RDP_TUNNEL_HOST: str = "backend"
-    RDP_TUNNEL_WAIT_SECONDS: int = 120
-    # Nova's ACTIVE state only means that the hypervisor started the VM.  A
-    # Windows guest can need some additional time before TermService accepts
-    # connections, so the web gateway performs bounded readiness retries.
-    RDP_READY_TIMEOUT_SECONDS: int = 45
-    RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS: int = 8
-    RDP_SESSION_TOKEN_TTL_SECONDS: int = 120
-    RDP_MAX_SESSIONS: int = 32
-    WDC_RDP_DOMAIN: str = "cyberprotect"
-    WDC_RDP_USERNAME: str = "administrator"
-    WDC_RDP_PASSWORD: str = "Pa$$w0rd"
 
      
     JWT_SECRET_KEY: str = "change-me-in-env"

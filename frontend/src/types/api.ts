@@ -84,9 +84,9 @@ export interface MyStandSummary {
   created_at: string | null;
 }
 
-export interface RdpSessionResponse {
+export interface ConsoleLinkResponse {
   launch_url: string;
-  expires_at: number;
+  server_id: string;
 }
 
 export interface CheckResponse {

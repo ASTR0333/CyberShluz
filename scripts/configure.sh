@@ -43,14 +43,6 @@ random_secret() {
     fi
 }
 
-random_hex_16() {
-    if command -v openssl >/dev/null 2>&1; then
-        openssl rand -hex 16
-    else
-        od -An -N16 -tx1 /dev/urandom | tr -d ' \n'
-    fi
-}
-
 if [[ -f "${ENV_FILE}" ]]; then
     read -r -p "${ENV_FILE} already exists. Replace it? [y/N]: " confirm
     [[ "${confirm}" =~ ^[Yy]$ ]] || exit 0
@@ -67,6 +59,7 @@ ask OS_USER_DOMAIN_NAME "OpenStack user domain" "$(read_existing OS_USER_DOMAIN_
 ask OS_PROJECT_DOMAIN_NAME "OpenStack project domain" "$(read_existing OS_PROJECT_DOMAIN_NAME Hackhaton)"
 ask OS_REGION_NAME "OpenStack region" "$(read_existing OS_REGION_NAME RegionOne)"
 ask OS_NETWORK_NAME "Default external network" "$(read_existing OS_NETWORK_NAME Public)"
+ask OS_DASHBOARD_URL "Cyber Infrastructure dashboard URL" "$(read_existing OS_DASHBOARD_URL https://edu.cyber-infrastructure.ru:8800)"
 ask VM_ADMIN_USER "Administrative VM user" "$(read_existing VM_ADMIN_USER labadmin)"
 ask VM_STUDENT_USER "Unprivileged VM user" "$(read_existing VM_STUDENT_USER student)"
 ask VM_BOOTSTRAP_USER "Legacy image initial SSH user (empty disables password bootstrap)" "$(read_existing VM_BOOTSTRAP_USER "$(read_existing VM_DEFAULT_USER '')")"
@@ -75,8 +68,6 @@ ask_secret VM_BOOTSTRAP_ROOT_PASSWORD "Legacy image root password for su (empty 
 ask VM_BUILD_TIMEOUT "Maximum shared VM build wait in seconds" "$(read_existing VM_BUILD_TIMEOUT 600)"
 ask SSH_BOOTSTRAP_TIMEOUT "SSH bootstrap timeout in seconds" "$(read_existing SSH_BOOTSTRAP_TIMEOUT 240)"
 ask DEPLOYMENT_STALE_TIMEOUT "Deployment heartbeat timeout in seconds" "$(read_existing DEPLOYMENT_STALE_TIMEOUT 1200)"
-ask RDP_READY_TIMEOUT_SECONDS "W-DC RDP readiness timeout in seconds" "$(read_existing RDP_READY_TIMEOUT_SECONDS 45)"
-ask RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS "Single W-DC RDP probe timeout in seconds" "$(read_existing RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS 8)"
 ask DEFAULT_TTL_HOURS "Stand TTL in hours" "$(read_existing DEFAULT_TTL_HOURS 2)"
 ask FREEZE_DURATION_HOURS "Freeze duration in hours" "$(read_existing FREEZE_DURATION_HOURS 24)"
 ask MAX_CLUSTER_UTILIZATION "Maximum projected cluster utilization (0..1)" "$(read_existing MAX_CLUSTER_UTILIZATION 0.9)"
@@ -84,7 +75,6 @@ ask MAX_CLUSTER_UTILIZATION "Maximum projected cluster utilization (0..1)" "$(re
 DB_PASSWORD="$(read_existing DB_PASSWORD "$(random_secret)")"
 JWT_SECRET_KEY="$(read_existing JWT_SECRET_KEY "$(random_secret)")"
 MOODLE_SHARED_SECRET="$(read_existing MOODLE_SHARED_SECRET "$(random_secret)")"
-GUACAMOLE_JSON_SECRET_KEY="$(read_existing GUACAMOLE_JSON_SECRET_KEY "$(random_hex_16)")"
 
 for required in OS_PROJECT_NAME OS_USERNAME OS_PASSWORD; do
     [[ -n "${!required}" ]] || { echo "${required} must not be empty" >&2; exit 2; }
@@ -101,7 +91,6 @@ umask 077
     printf 'DB_PASSWORD=%s\n' "${DB_PASSWORD}"
     printf 'JWT_SECRET_KEY=%s\n' "${JWT_SECRET_KEY}"
     printf 'MOODLE_SHARED_SECRET=%s\n' "${MOODLE_SHARED_SECRET}"
-    printf 'GUACAMOLE_JSON_SECRET_KEY=%s\n' "${GUACAMOLE_JSON_SECRET_KEY}"
     printf 'OS_AUTH_URL=%s\n' "${OS_AUTH_URL}"
     printf 'OS_PROJECT_NAME=%s\n' "${OS_PROJECT_NAME}"
     printf 'OS_USERNAME=%s\n' "${OS_USERNAME}"
@@ -110,6 +99,7 @@ umask 077
     printf 'OS_PROJECT_DOMAIN_NAME=%s\n' "${OS_PROJECT_DOMAIN_NAME}"
     printf 'OS_REGION_NAME=%s\n' "${OS_REGION_NAME}"
     printf 'OS_NETWORK_NAME=%s\n' "${OS_NETWORK_NAME}"
+    printf 'OS_DASHBOARD_URL=%s\n' "${OS_DASHBOARD_URL}"
     printf 'VM_ADMIN_USER=%s\n' "${VM_ADMIN_USER}"
     printf 'VM_STUDENT_USER=%s\n' "${VM_STUDENT_USER}"
     printf 'VM_BOOTSTRAP_USER=%s\n' "${VM_BOOTSTRAP_USER}"
@@ -118,8 +108,6 @@ umask 077
     printf 'VM_BUILD_TIMEOUT=%s\n' "${VM_BUILD_TIMEOUT}"
     printf 'SSH_BOOTSTRAP_TIMEOUT=%s\n' "${SSH_BOOTSTRAP_TIMEOUT}"
     printf 'DEPLOYMENT_STALE_TIMEOUT=%s\n' "${DEPLOYMENT_STALE_TIMEOUT}"
-    printf 'RDP_READY_TIMEOUT_SECONDS=%s\n' "${RDP_READY_TIMEOUT_SECONDS}"
-    printf 'RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS=%s\n' "${RDP_CHANNEL_ATTEMPT_TIMEOUT_SECONDS}"
     printf 'DEFAULT_TTL_HOURS=%s\n' "${DEFAULT_TTL_HOURS}"
     printf 'FREEZE_DURATION_HOURS=%s\n' "${FREEZE_DURATION_HOURS}"
     printf 'MAX_CLUSTER_UTILIZATION=%s\n' "${MAX_CLUSTER_UTILIZATION}"

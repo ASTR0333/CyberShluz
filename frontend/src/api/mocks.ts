@@ -12,7 +12,7 @@ import type {
   StudentStand,
   DeploymentOptions,
   MyStandSummary,
-  RdpSessionResponse,
+  ConsoleLinkResponse,
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
@@ -152,8 +152,8 @@ export const mockApi = {
       body: JSON.stringify(req),
     }),
 
-  createRdpSession: (stand_id: string): Promise<RdpSessionResponse> =>
-    apiFetch(`/stand/${stand_id}/rdp-session`, { method: 'POST' }, 105_000),
+  createConsoleLink: (stand_id: string): Promise<ConsoleLinkResponse> =>
+    apiFetch(`/stand/${stand_id}/console`, { method: 'POST' }),
 
 
   getStands: (): Promise<StudentStand[]> => apiFetch('/admin/stands'),

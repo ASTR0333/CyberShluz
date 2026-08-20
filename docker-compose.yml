@@ -103,23 +103,6 @@ services:
     restart: unless-stopped
 
 
-  guacd:
-    image: guacamole/guacd:1.6.0
-    restart: unless-stopped
-
-
-  guacamole:
-    image: guacamole/guacamole:1.6.0
-    environment:
-      GUACD_HOSTNAME: guacd
-      JSON_ENABLED: "true"
-      JSON_SECRET_KEY: ${GUACAMOLE_JSON_SECRET_KEY:?GUACAMOLE_JSON_SECRET_KEY must be 32 hex characters}
-      WEBAPP_CONTEXT: rdp
-    depends_on:
-      - guacd
-    restart: unless-stopped
-
-
   frontend:
     build:
       context: ./frontend
@@ -150,8 +133,6 @@ services:
       frontend:
         condition: service_healthy
         restart: true
-      guacamole:
-        condition: service_started
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/health"]
       interval: 5s

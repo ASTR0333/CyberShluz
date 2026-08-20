@@ -11,7 +11,7 @@ from app.core.database import engine, Base
 import app.core.models   
 
  
-from app.api.v1 import auth, deploy, status, freeze, check, cleanup, moodle, admin, pubkey, lti, terminal, rdp
+from app.api.v1 import auth, deploy, status, freeze, check, cleanup, moodle, admin, pubkey, lti, terminal, console
 
  
 @asynccontextmanager
@@ -133,8 +133,6 @@ async def lifespan(app: FastAPI):
         raise
 
     yield
-    from app.services.rdp_gateway import rdp_tunnel_broker
-    rdp_tunnel_broker.close_all()
     print(" [SHUTDOWN] Lab Orchestrator API stopped", flush=True)
 
  
@@ -182,7 +180,7 @@ app.include_router(admin.router, prefix="/api/v1", tags=["Admin"])
 app.include_router(pubkey.router, prefix="/api/v1", tags=["SSH Key"])
 app.include_router(lti.router, prefix="/api/v1", tags=["LTI 1.3 (Этап 4)"])
 app.include_router(terminal.router, prefix="/api/v1", tags=["Web Terminal"])
-app.include_router(rdp.router, prefix="/api/v1", tags=["Web RDP"])
+app.include_router(console.router, prefix="/api/v1", tags=["VM Console"])
 
  
 if __name__ == "__main__":

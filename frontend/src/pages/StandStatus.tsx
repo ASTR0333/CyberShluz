@@ -109,7 +109,7 @@ export const StandStatus = () => {
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
   const [keySubmitted, setKeySubmitted] = useState(false);
   const [terminalOpen, setTerminalOpen] = useState(false);
-  const [isOpeningRdp, setIsOpeningRdp] = useState(false);
+  const [isOpeningConsole, setIsOpeningConsole] = useState(false);
   const [manualConfirmations, setManualConfirmations] = useState<string[]>([]);
   const [myStands, setMyStands] = useState<MyStandSummary[]>([]);
 
@@ -256,20 +256,20 @@ export const StandStatus = () => {
     tab.document.title = 'Подключение к W-DC';
     tab.document.body.style.cssText = 'margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#e5e7eb;font:16px system-ui,sans-serif';
     const popupStatus = tab.document.createElement('p');
-    popupStatus.textContent = 'Ожидание готовности RDP на W-DC…';
+    popupStatus.textContent = 'Открываем консоль W-DC в КИ…';
     tab.document.body.replaceChildren(popupStatus);
-    setIsOpeningRdp(true);
+    setIsOpeningConsole(true);
     try {
-      const session = await mockApi.createRdpSession(standId);
-      tab.location.replace(session.launch_url);
-      toast.success('Веб-сессия W-DC открыта в новой вкладке');
+      const consoleLink = await mockApi.createConsoleLink(standId);
+      tab.location.replace(consoleLink.launch_url);
+      toast.success('Консоль W-DC открыта в КИ');
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : 'Не удалось открыть W-DC';
       popupStatus.textContent = message;
       popupStatus.style.color = '#fca5a5';
       toast.error(message);
     } finally {
-      setIsOpeningRdp(false);
+      setIsOpeningConsole(false);
     }
   };
 
@@ -333,6 +333,7 @@ export const StandStatus = () => {
   const sshCmd = status.ip_address ? `ssh ${sshUser}@${status.ip_address}` : null;
   const lmsInternalIp = status.vms?.['L-MS']?.ip || status.vms?.['L-MS']?.expected_ip;
   const wdcInternalIp = status.vms?.['W-DC']?.ip || status.vms?.['W-DC']?.expected_ip;
+  const wdcServerId = status.vms?.['W-DC']?.server_id;
   const managementUrl = status.ip_address ? `https://${status.ip_address}:9877` : null;
   const rdpTunnelCmd = status.ip_address && wdcInternalIp
     ? `ssh -L 13389:${wdcInternalIp}:3389 ${sshUser}@${status.ip_address}`
@@ -483,10 +484,10 @@ export const StandStatus = () => {
 
             <button
               onClick={handleOpenWdc}
-              disabled={status.status !== 'READY' || !wdcInternalIp || isOpeningRdp}
+              disabled={status.status !== 'READY' || !wdcServerId || isOpeningConsole}
               className="flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
             >
-              {isOpeningRdp
+              {isOpeningConsole
                 ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
                 : <MonitorPlay className="w-5 h-5 mr-2" />}
               Открыть W-DC
