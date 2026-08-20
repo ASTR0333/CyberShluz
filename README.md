@@ -19,6 +19,8 @@ chmod +x scripts/configure.sh scripts/deploy.sh
 
 Подготовка Кибер Инфраструктуры, две постоянные ВМ, Moodle/LTI, точное заполнение конфигурации, SSH-безопасность, лабораторные образы, CI/CD, проверка и эксплуатация собраны в одном [полном руководстве](docs/GUIDE.md).
 
+Production CI/CD настроен на SSH-деплой к `mvp_admin@10.46.128.246` через self-hosted GitHub Actions runner. Требуемые secrets и подготовка сервера описаны в [разделе CI/CD](docs/GUIDE.md#13-cicd-github-actions).
+
 ## Проверки разработки
 
 ```bash

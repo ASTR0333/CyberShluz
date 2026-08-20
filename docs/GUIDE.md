@@ -219,10 +219,10 @@ export OS_REGION_NAME=RegionOne
 | Default external network | `Public` | имя внешней сети КИ; не `local` |
 | Administrative VM user | `labadmin` | создаётся cloud-init лабораторных ВМ |
 | Unprivileged VM user | `student` | создаётся cloud-init лабораторных ВМ |
-| Legacy image initial SSH user | заводской пользователь L-MS либо пусто | нужен только образам без cloud-init |
-| Legacy image initial SSH password | заводской пароль L-MS либо пусто | хранится только в `.env`, после bootstrap вход по паролю отключается |
+| Legacy image initial SSH user | заводской пользователь Linux-образов либо пусто | нужен только образам без cloud-init; все legacy-образы должны иметь одинаковые bootstrap credentials |
+| Legacy image initial SSH password | заводской пароль Linux-образов либо пусто | хранится только в `.env`, после bootstrap вход по паролю отключается |
 | Legacy image root password | пароль root для `su` либо пусто | нужен, если заводской SSH-пользователь без sudo; пусто означает тот же пароль |
-| SSH bootstrap timeout | `240` | максимальное ожидание доступности legacy L-MS |
+| SSH bootstrap timeout | `240` | максимальное ожидание доступности legacy Linux-ВМ |
 | Stand TTL in hours | `2` | срок обычного стенда |
 | Freeze duration in hours | `24` | срок заморозки стенда |
 | Maximum projected utilization | `0.9` | предел 90% квоты |
@@ -405,6 +405,12 @@ CyberShluz генерирует свой LTI RSA-ключ при первом о
 - квоты проекта позволяют создать выбранные ресурсы;
 - внешняя сеть называется `Public` либо пользователь выбрал правильное имя в форме.
 
+CyberShluz передаёт cloud-init/Cloudbase-Init через Nova `user_data`
+в Base64 и включает config drive. Так один административный keypair
+стенда попадает на все ВМ даже при недоступном metadata proxy. ВМ,
+созданные старой версией без маркера SSH-политики, при повторном
+развёртывании создаются заново: изменить `user_data` уже запущенной ВМ нельзя.
+
 В форме можно изменить CIDR, gateway, DHCP pool, DNS, external network, образы, выбрать flavor из списка OpenStack и задать статические IP. DHCP pool не должен пересекаться со статическими IP. L-MS обязательна как компонент лабораторной топологии. Каждая включённая Linux-ВМ получает отдельный Floating IP.
 
 ## 10. Модель SSH-доступа лабораторного стенда
@@ -532,15 +538,38 @@ docker compose --project-name cybershluz exec -T db \
 
 ## 13. CI/CD GitHub Actions
 
-Workflow выполняет backend lint/tests, frontend lint/build, secret scan, Compose build и затем полный деплой через self-hosted runner.
+Workflow выполняет backend lint/tests, frontend lint/build, secret scan, Compose build и затем по SSH выкладывает проверенный commit на `mvp_admin@10.46.128.246`. Каждая выкладка хранится как отдельный release в `/home/mvp_admin/cybershluz-deploy`; текущая версия доступна через ссылку `current`. Одновременные деплои блокируются, а при неудаче скрипт пытается вернуть предыдущий release.
 
-В GitHub Environment `staging` или `production` задайте:
+`10.46.128.246` входит в частный диапазон `10.0.0.0/8`. Поэтому job деплоя запускается на self-hosted runner с labels `self-hosted`, `linux`, `cybershluz`, который видит этот адрес. CI-проверки выполняются на GitHub-hosted runner. Если labels отличаются, задайте variable `DEPLOY_RUNNER` как JSON-массив, например `["self-hosted","linux","production"]`.
+
+Один раз подготовьте сервер:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y docker.io docker-compose-v2
+sudo systemctl enable --now docker
+sudo usermod -aG docker mvp_admin
+```
+
+После добавления в группу нужно заново войти по SSH. Проверьте под пользователем `mvp_admin`, что `docker info` и `docker compose version` работают без `sudo`. Добавьте отдельный public SSH-ключ CI в `/home/mvp_admin/.ssh/authorized_keys`.
+
+В GitHub Environment `production` задайте:
 
 - secret `ENV_FILE` — полное содержимое `.env` соответствующего окружения;
-- variable `COMPOSE_PROJECT_NAME` — например `cybershluz-production`;
-- variable `DEPLOY_RUNNER` — JSON-массив labels runner, например `["self-hosted","linux","production"]`.
+- secret `DEPLOY_SSH_PRIVATE_KEY` — приватный SSH-ключ CI без passphrase;
+- secret `DEPLOY_KNOWN_HOSTS` — заранее проверенная строка host key для `10.46.128.246`;
+- variable `COMPOSE_PROJECT_NAME` — например `cybershluz`;
+- optional variable `DEPLOY_RUNNER` — JSON-массив labels runner;
+- optional variable `DEPLOY_HEALTHCHECK_URL` — URL проверки, если сервис опубликован не на порту 80.
 
-Self-hosted runner должен находиться в административном контуре и иметь доступ к Docker. `deploy.sh` может установить Docker на Ubuntu 24.04, но для неинтерактивного CI лучше заранее запустить его вручную один раз и убедиться, что runner состоит в группе `docker`.
+Host key получите и сверьте его fingerprint через консоль сервера, после чего сохраните строку в `DEPLOY_KNOWN_HOSTS`:
+
+```bash
+ssh-keyscan -H 10.46.128.246 > known_hosts
+ssh-keygen -lf known_hosts
+```
+
+Пуш в `main` автоматически деплоит `production`. Для ручного запуска используйте **Actions → CI/CD → Run workflow**. В GitHub Environment `production` рекомендуется включить required reviewers.
 
 ## 14. Частые ошибки
 

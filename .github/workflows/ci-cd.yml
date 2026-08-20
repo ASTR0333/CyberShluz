@@ -6,14 +6,6 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      environment:
-        description: GitHub Environment containing deployment settings
-        required: true
-        type: choice
-        default: staging
-        options:
-          - staging
-          - production
       deploy:
         description: Deploy after successful CI
         required: true
@@ -24,21 +16,28 @@ permissions:
   contents: read
 
 concurrency:
-  group: cybershluz-${{ github.workflow }}-${{ github.ref }}-${{ inputs.environment || 'production' }}
+  group: cybershluz-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PYTHON_VERSION: '3.12'
+  NODE_VERSION: '24'
 
 jobs:
   backend:
     name: Backend checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: backend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          python-version: '3.12'
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - name: Install dependencies
@@ -46,19 +45,22 @@ jobs:
       - name: Ruff
         run: ruff check app tests --output-format=github
       - name: Tests
-        run: pytest -q
+        run: python -m pytest -q
 
   frontend:
     name: Frontend checks
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: frontend
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          node-version: '20'
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
           cache: npm
           cache-dependency-path: frontend/package-lock.json
       - run: npm ci
@@ -67,60 +69,130 @@ jobs:
 
   security:
     name: Secret scan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          persist-credentials: false
       - name: Gitleaks
+        env:
+          GITLEAKS_VERSION: 8.30.1
+          GITLEAKS_SHA256: 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb
         run: |
-          curl -sSL https://github.com/gitleaks/gitleaks/releases/download/v8.21.2/gitleaks_8.21.2_linux_x64.tar.gz -o /tmp/gitleaks.tgz
-          tar -xzf /tmp/gitleaks.tgz -C /tmp gitleaks
+          archive="gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --fail --show-error --silent --location \
+            --retry 3 --output "/tmp/${archive}" \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/${archive}"
+          echo "${GITLEAKS_SHA256}  /tmp/${archive}" | sha256sum --check --strict
+          tar -xzf "/tmp/${archive}" -C /tmp gitleaks
           /tmp/gitleaks detect --no-banner --redact --config .gitleaks.toml
 
   images:
     name: Compose build
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     needs: [backend, frontend, security]
     steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4.3.0
       - name: Prepare non-secret build environment
         run: cp .env.example .env
       - name: Validate Compose model
         run: docker compose --env-file .env --project-name cybershluz-ci config --quiet
       - name: Build application images
-        run: docker compose --env-file .env --project-name cybershluz-ci build backend celery_worker celery_beat frontend
-      - name: Verify non-root containers
+        run: docker compose --env-file .env --project-name cybershluz-ci build backend celery_worker celery_beat frontend nginx-proxy
+      - name: Verify non-root application containers
         run: |
           test "$(docker compose --env-file .env --project-name cybershluz-ci run --rm --no-deps --entrypoint id backend -u)" != "0"
           test "$(docker compose --env-file .env --project-name cybershluz-ci run --rm --no-deps --entrypoint id frontend -u)" != "0"
 
   deploy:
-    name: Deploy complete stack
+    name: Deploy mvp_admin@10.46.128.246
     needs: images
     if: >-
       github.event_name == 'push' ||
       (github.event_name == 'workflow_dispatch' && inputs.deploy)
-    environment: ${{ inputs.environment || 'production' }}
-    runs-on: ${{ fromJSON(vars.DEPLOY_RUNNER || '["self-hosted","linux"]') }}
+    environment: production
+    runs-on: ${{ fromJSON(vars.DEPLOY_RUNNER || '["self-hosted","linux","cybershluz"]') }}
+    timeout-minutes: 30
+    env:
+      DEPLOY_HOST: 10.46.128.246
+      DEPLOY_USER: mvp_admin
+      DEPLOY_ROOT: /home/mvp_admin/cybershluz-deploy
+      COMPOSE_PROJECT_NAME: ${{ vars.COMPOSE_PROJECT_NAME || 'cybershluz' }}
+      HEALTHCHECK_URL: ${{ vars.DEPLOY_HEALTHCHECK_URL || 'http://10.46.128.246/health' }}
     steps:
-      - uses: actions/checkout@v4
-      - name: Write environment file
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Upload release and deploy over SSH
         shell: bash
         env:
+          DEPLOY_SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_PRIVATE_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
           ENV_FILE_CONTENT: ${{ secrets.ENV_FILE }}
         run: |
-          test -n "$ENV_FILE_CONTENT" || { echo "ENV_FILE secret is empty" >&2; exit 1; }
+          set -Eeuo pipefail
+
+          for required in DEPLOY_SSH_PRIVATE_KEY DEPLOY_KNOWN_HOSTS ENV_FILE_CONTENT; do
+            test -n "${!required}" || { echo "Required secret ${required} is empty" >&2; exit 1; }
+          done
+          [[ "${COMPOSE_PROJECT_NAME}" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+            echo "COMPOSE_PROJECT_NAME contains unsupported characters" >&2
+            exit 1
+          }
+
+          key_file="${RUNNER_TEMP}/cybershluz_deploy_key"
+          known_hosts_file="${RUNNER_TEMP}/cybershluz_known_hosts"
+          release_id="${GITHUB_SHA}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          archive_name="cybershluz-${release_id}.tar.gz"
+          remote_script_name="cybershluz-${release_id}.remote-deploy.sh"
+          archive_file="${RUNNER_TEMP}/${archive_name}"
+          env_file="${RUNNER_TEMP}/cybershluz-${release_id}.env"
+
+          cleanup() {
+            rm -f "${key_file}" "${known_hosts_file}" "${archive_file}" "${env_file}"
+          }
+          trap cleanup EXIT
           umask 077
-          printf '%s\n' "$ENV_FILE_CONTENT" > .env.deploy
-          sed -i 's/\r$//' .env.deploy
-      - name: Deploy and verify
+          printf '%s\n' "${DEPLOY_SSH_PRIVATE_KEY}" > "${key_file}"
+          printf '%s\n' "${DEPLOY_KNOWN_HOSTS}" > "${known_hosts_file}"
+          printf '%s\n' "${ENV_FILE_CONTENT}" | sed 's/\r$//' > "${env_file}"
+          ssh-keygen -y -f "${key_file}" >/dev/null
+          ssh-keygen -F "${DEPLOY_HOST}" -f "${known_hosts_file}" >/dev/null || {
+            echo "DEPLOY_KNOWN_HOSTS has no key for ${DEPLOY_HOST}" >&2
+            exit 1
+          }
+
+          git archive --format=tar.gz --output="${archive_file}" "${GITHUB_SHA}"
+          ssh_options=(
+            -i "${key_file}"
+            -o BatchMode=yes
+            -o ConnectTimeout=15
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=yes
+            -o "UserKnownHostsFile=${known_hosts_file}"
+          )
+
+          ssh "${ssh_options[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" true
+          scp "${ssh_options[@]}" \
+            "${archive_file}" \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/${archive_name}"
+          scp "${ssh_options[@]}" \
+            scripts/remote-deploy.sh \
+            "${DEPLOY_USER}@${DEPLOY_HOST}:/tmp/${remote_script_name}"
+          ssh "${ssh_options[@]}" "${DEPLOY_USER}@${DEPLOY_HOST}" \
+            "bash '/tmp/${remote_script_name}' '${release_id}' '${DEPLOY_ROOT}' '${archive_name}' '${COMPOSE_PROJECT_NAME}'" \
+            < "${env_file}"
+
+      - name: Verify published endpoint
         shell: bash
-        env:
-          COMPOSE_PROJECT_NAME: ${{ vars.COMPOSE_PROJECT_NAME || 'cybershluz' }}
-        run: bash scripts/deploy.sh --env-file .env.deploy --project-name "$COMPOSE_PROJECT_NAME" --pull
-      - name: Remove plaintext environment file
-        if: always()
-        shell: bash
-        run: rm -f .env.deploy
+        run: |
+          curl --fail --show-error --silent \
+            --retry 6 --retry-delay 5 --retry-all-errors \
+            --connect-timeout 5 --max-time 15 \
+            "${HEALTHCHECK_URL}" >/dev/null

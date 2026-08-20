@@ -29,6 +29,9 @@ class VMProvisioningError(RuntimeError):
 
 
 class OpenStackClient:
+    SSH_POLICY_METADATA_KEY = "cybershluz_ssh_policy"
+    SSH_POLICY_VERSION = "3"
+
     def __init__(self, project_ref: str | None = None):
         self._conn = None
         self.project_ref = project_ref
@@ -348,7 +351,17 @@ class OpenStackClient:
                 progress_cb(int(30 + 60 * idx / total), f"Создание ВМ {vm_role} ({idx+1}/{total})...")
 
             existing = conn.compute.find_server(vm_name)
-            if existing and existing.status in ("ACTIVE", "BUILD"):
+            existing_status = (
+                str(getattr(existing, "status", "") or "").upper()
+                if existing
+                else ""
+            )
+            existing_metadata = (getattr(existing, "metadata", None) or {}) if existing else {}
+            has_current_ssh_policy = (
+                str(existing_metadata.get(self.SSH_POLICY_METADATA_KEY, ""))
+                == self.SSH_POLICY_VERSION
+            )
+            if existing and existing_status in ("ACTIVE", "BUILD") and has_current_ssh_policy:
                 actual_ip = spec["ip"]
                 floating_ip = None
                 if existing.addresses:
@@ -364,7 +377,7 @@ class OpenStackClient:
                     "name": vm_name,
                     "expected_ip": spec["ip"],
                     "ip": actual_ip,
-                    "status": existing.status,
+                    "status": existing_status,
                 }
                 if floating_ip:
                     res["floating_ip"] = floating_ip
@@ -372,12 +385,19 @@ class OpenStackClient:
                 results[vm_role] = res
                 if resource_cb:
                     resource_cb(results, net_info)
-                print(f"[OpenStack] {vm_name} already exists ({existing.status}), skipping")
+                print(f"[OpenStack] {vm_name} already exists ({existing_status}), skipping")
                 continue
 
             if existing:
-                # A failed server with the same name would make retries look
-                # successful while Nova never builds a fresh instance.
+                # Servers created before SSH policy v3 received raw, rather
+                # than Base64-encoded, user_data. Nova still built them, but
+                # cloud-init could not create labadmin or install the shared
+                # stand key. Recreate those instances on an explicit retry.
+                if existing_status in ("ACTIVE", "BUILD") and not has_current_ssh_policy:
+                    print(
+                        f"[OpenStack] Recreating {vm_name}: obsolete or missing "
+                        "SSH bootstrap metadata"
+                    )
                 conn.compute.delete_server(existing)
                 conn.compute.wait_for_delete(existing, wait=120)
 
@@ -391,7 +411,10 @@ class OpenStackClient:
 
             admin_pubkey = conn.compute.get_keypair(admin_key_name).public_key
             student_pubkey = conn.compute.get_keypair(student_key_name).public_key
-            user_data = self.build_user_data(vm_role, admin_pubkey, student_pubkey)
+            raw_user_data = self.build_user_data(vm_role, admin_pubkey, student_pubkey)
+            # This is the low-level compute Proxy, not Connection.create_server.
+            # The Nova API requires this field to be Base64 encoded.
+            user_data = base64.b64encode(raw_user_data.encode("utf-8")).decode("ascii")
 
             server_args = dict(
                 name=vm_name,
@@ -400,6 +423,10 @@ class OpenStackClient:
                 key_name=admin_key_name,
                 security_groups=[{"name": sg.name}],
                 user_data=user_data,
+                # Make SSH keys and user_data available even when the Neutron
+                # metadata proxy is absent or not yet reachable during boot.
+                config_drive=True,
+                metadata={self.SSH_POLICY_METADATA_KEY: self.SSH_POLICY_VERSION},
             )
             image_details = image
             if getattr(conn, "image", None):
@@ -1195,44 +1222,83 @@ printf 'kibershluz-bootstrap-ok\n'
                 name=sg_name,
                 description=f"Key-only external access and private traffic for stand {stand_id}",
             )
-        rules = [
-            (22, 22, "tcp"),
-            (80, 80, "tcp"),
-            (443, 443, "tcp"),
-            (9877, 9877, "tcp"),
+        desired_rules = [
+            {
+                "direction": "ingress",
+                "ethertype": "IPv4",
+                "protocol": "tcp",
+                "port_range_min": port_min,
+                "port_range_max": port_max,
+                "remote_ip_prefix": "0.0.0.0/0",
+            }
+            for port_min, port_max in (
+                (22, 22),
+                (80, 80),
+                (443, 443),
+                (9877, 9877),
+            )
         ]
-        for port_min, port_max, proto in rules:
+        desired_rules.extend(
+            [
+                {
+                    "direction": "ingress",
+                    "ethertype": "IPv4",
+                    "remote_ip_prefix": private_cidr,
+                },
+                {
+                    "direction": "ingress",
+                    "ethertype": "IPv4",
+                    "protocol": "icmp",
+                    "remote_ip_prefix": "0.0.0.0/0",
+                },
+                {
+                    "direction": "egress",
+                    "ethertype": "IPv4",
+                    "remote_ip_prefix": "0.0.0.0/0",
+                },
+            ]
+        )
+
+        def value(rule, field):
+            return rule.get(field) if isinstance(rule, dict) else getattr(rule, field, None)
+
+        def rule_identity(rule) -> tuple:
+            direction = str(value(rule, "direction") or "").lower()
+            ethertype = str(value(rule, "ethertype") or "IPv4")
+            protocol = value(rule, "protocol")
+            protocol = None if protocol in (None, "", "any") else str(protocol).lower()
+            prefix = value(rule, "remote_ip_prefix")
+            if direction == "egress" and ethertype == "IPv4" and not prefix:
+                prefix = "0.0.0.0/0"
+            return (
+                direction,
+                ethertype,
+                protocol,
+                value(rule, "port_range_min"),
+                value(rule, "port_range_max"),
+                prefix,
+            )
+
+        current_rules = getattr(sg, "security_group_rules", None)
+        if current_rules is None:
+            current_rules = list(conn.network.security_group_rules(security_group_id=sg.id))
+        existing = {rule_identity(rule) for rule in current_rules}
+        for desired in desired_rules:
+            identity = rule_identity(desired)
+            if identity in existing:
+                continue
             try:
                 conn.network.create_security_group_rule(
                     security_group_id=sg.id,
-                    direction="ingress",
-                    ethertype="IPv4",
-                    protocol=proto,
-                    port_range_min=port_min,
-                    port_range_max=port_max,
-                    remote_ip_prefix="0.0.0.0/0",
+                    **desired,
                 )
-            except Exception:
-                pass
-        try:
-            conn.network.create_security_group_rule(
-                security_group_id=sg.id,
-                direction="ingress",
-                ethertype="IPv4",
-                remote_ip_prefix=private_cidr,
-            )
-        except Exception:
-            pass
-        try:
-            conn.network.create_security_group_rule(
-                security_group_id=sg.id,
-                direction="ingress",
-                ethertype="IPv4",
-                protocol="icmp",
-                remote_ip_prefix="0.0.0.0/0",
-            )
-        except Exception:
-            pass
+                existing.add(identity)
+            except Exception as exc:
+                # SSH without an ingress rule is indistinguishable from a
+                # broken floating IP. Do not hide RBAC/quota/API failures.
+                raise RuntimeError(
+                    f"Cannot create required rule {identity} in security group {sg_name}: {exc}"
+                ) from exc
         return sg
 
     def _assign_floating_ip(

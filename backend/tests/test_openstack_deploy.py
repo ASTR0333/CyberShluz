@@ -1,3 +1,4 @@
+import base64
 from types import SimpleNamespace
 from unittest.mock import mock_open
 import socket
@@ -68,7 +69,7 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
     monkeypatch.setattr(
         client,
         "_ensure_security_group",
-        lambda *_args: SimpleNamespace(name="stand1-sg"),
+        lambda *_args: SimpleNamespace(id="stand1-sg-id", name="stand1-sg"),
     )
     def assign_floating_ip(_conn, server_id, _external_network, _reserved_ips):
         floating_ip_calls.append(server_id)
@@ -100,6 +101,17 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
     assert all(call["image_id"] == "image-id" for call in create_server_calls)
     assert all(call["flavor_id"] == "flavor-id" for call in create_server_calls)
     assert all("block_device_mapping_v2" not in call for call in create_server_calls)
+    assert all(call["config_drive"] is True for call in create_server_calls)
+    assert all(
+        call["metadata"] == {"cybershluz_ssh_policy": "3"}
+        for call in create_server_calls
+    )
+    decoded_user_data = [
+        base64.b64decode(call["user_data"], validate=True).decode("utf-8")
+        for call in create_server_calls
+    ]
+    assert all(data.startswith("#cloud-config") for data in decoded_user_data)
+    assert all("name: labadmin" in data for data in decoded_user_data)
     assert floating_ip_calls == ["stand1-L-MS", "stand1-L-NFS", "stand1-L-PGSQL"]
     assert result["L-MS"]["floating_ip"] == "203.0.113.10"
     assert result["L-NFS"]["floating_ip"] == "203.0.113.70"
@@ -109,6 +121,130 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
         ("L-NFS", "203.0.113.70"),
         ("L-PGSQL", "203.0.113.55"),
     ]
+
+
+def test_active_server_with_obsolete_ssh_policy_is_recreated(monkeypatch) -> None:
+    stale = SimpleNamespace(
+        id="stale-lms",
+        name="stand1-L-MS",
+        status="ACTIVE",
+        metadata={},
+        addresses={"stand-net": [{"OS-EXT-IPS:type": "fixed", "addr": "10.10.0.10"}]},
+    )
+
+    class FakeCompute:
+        def __init__(self):
+            self.deleted = []
+            self.created = []
+
+        def find_server(self, _name):
+            return stale
+
+        def delete_server(self, server):
+            self.deleted.append(server.id)
+
+        def wait_for_delete(self, _server, wait):
+            assert wait == 120
+
+        def find_image(self, _name):
+            return SimpleNamespace(id="image-id", min_disk=5)
+
+        def find_flavor(self, _name):
+            return SimpleNamespace(id="flavor-id", disk=20)
+
+        def get_keypair(self, name):
+            return SimpleNamespace(public_key=f"ssh-ed25519 key-for-{name}")
+
+        def create_server(self, **kwargs):
+            self.created.append(kwargs)
+            return SimpleNamespace(id="replacement-lms")
+
+        def get_server(self, server_id):
+            assert server_id == "replacement-lms"
+            return SimpleNamespace(
+                id=server_id,
+                status="ACTIVE",
+                addresses={
+                    "stand-net": [
+                        {"OS-EXT-IPS:type": "fixed", "addr": "10.10.0.10"},
+                    ]
+                },
+            )
+
+    class FakeNetwork:
+        def get_network(self, _network_id):
+            return SimpleNamespace(id="network-id")
+
+    compute = FakeCompute()
+    connection = SimpleNamespace(compute=compute, network=FakeNetwork(), image=None)
+    client = OpenStackClient()
+    monkeypatch.setattr(client, "_connect", lambda: connection)
+    monkeypatch.setattr(
+        client,
+        "_ensure_stand_network",
+        lambda *_args: {"network_id": "network-id", "external_network": "Public"},
+    )
+    monkeypatch.setattr(
+        client,
+        "_ensure_security_group",
+        lambda *_args: SimpleNamespace(id="stand1-sg-id", name="stand1-sg"),
+    )
+    monkeypatch.setattr(client, "_assign_floating_ip", lambda *_args: "203.0.113.10")
+    monkeypatch.setattr(client, "_prepare_lms_access", lambda *_args: None)
+    payload = default_lab3_config().model_dump()
+    payload["vms"] = payload["vms"][:1]
+
+    result = client.deploy_lab3_stand(
+        "1",
+        "shared-admin-key",
+        "shared-student-key",
+        "admin-private",
+        "student-private",
+        deployment=DeploymentConfig.model_validate(payload),
+    )
+
+    assert compute.deleted == ["stale-lms"]
+    assert len(compute.created) == 1
+    assert compute.created[0]["key_name"] == "shared-admin-key"
+    assert compute.created[0]["metadata"] == {"cybershluz_ssh_policy": "3"}
+    assert result["L-MS"]["ssh_bootstrapped"] is True
+
+
+def test_security_group_reconciles_required_ssh_and_egress_rules() -> None:
+    created_rules = []
+
+    class FakeNetwork:
+        def find_security_group(self, _name):
+            return SimpleNamespace(
+                id="sg-id",
+                name="stand1-key-only-sg",
+                security_group_rules=[],
+            )
+
+        def create_security_group_rule(self, **kwargs):
+            created_rules.append(kwargs)
+            return SimpleNamespace(**kwargs)
+
+    client = OpenStackClient()
+    sg = client._ensure_security_group(
+        SimpleNamespace(network=FakeNetwork()),
+        "1",
+        "10.10.0.0/24",
+    )
+
+    assert sg.id == "sg-id"
+    assert any(
+        rule["direction"] == "ingress"
+        and rule.get("protocol") == "tcp"
+        and rule.get("port_range_min") == 22
+        and rule.get("remote_ip_prefix") == "0.0.0.0/0"
+        for rule in created_rules
+    )
+    assert any(
+        rule["direction"] == "egress"
+        and rule.get("remote_ip_prefix") == "0.0.0.0/0"
+        for rule in created_rules
+    )
 
 
 def test_floating_ip_is_not_reused_while_neutron_still_reports_it_down() -> None:
@@ -237,7 +373,11 @@ def test_all_servers_share_one_build_deadline(monkeypatch) -> None:
         "_ensure_stand_network",
         lambda *_args: {"network_id": "network-id", "external_network": "Public"},
     )
-    monkeypatch.setattr(client, "_ensure_security_group", lambda *_args: SimpleNamespace(name="stand1-sg"))
+    monkeypatch.setattr(
+        client,
+        "_ensure_security_group",
+        lambda *_args: SimpleNamespace(id="stand1-sg-id", name="stand1-sg"),
+    )
     monkeypatch.setattr("app.core.openstack_client.settings.VM_BUILD_TIMEOUT", 10)
     monkeypatch.setattr("app.core.openstack_client.time.monotonic", clock.monotonic)
     monkeypatch.setattr("app.core.openstack_client.time.sleep", clock.sleep)
