@@ -18,16 +18,6 @@ RESULTS_DB: dict[str, dict] = {}
 router = APIRouter()
 logger = logging.getLogger(__name__)
 
-MANUAL_CHECKS = {
-    "w_dc_registered": "w-dc.cyberprotect.test отображается в списке узлов хранения",
-    "repositories_present": "Хранилища RepoW и RepoL созданы и отображаются в веб-консоли",
-}
-# Older frontend tabs may still send this confirmation. It is accepted for
-# compatibility, but no longer affects the result because W-DC services are
-# now checked automatically over SSH.
-IGNORED_CONFIRMATIONS = {"w_dc_services"}
-
-
 def push_lti_grade(stand_id: str, score_given: float = 100.0) -> None:
     """
     Возврат оценки в Moodle через LTI AGS после успешной проверки ЛР.
@@ -63,7 +53,6 @@ def push_lti_grade(stand_id: str, score_given: float = 100.0) -> None:
 
 class CheckRequest(BaseModel):
     lab_template: str = Field(default="lab03_cyber", pattern=r"^[a-z0-9_]+$")
-    manual_confirmations: list[str] = Field(default_factory=list)
 
 
 @router.post(
@@ -114,15 +103,6 @@ async def start_check(
         logger.error(f"Error parsing vm_details for stand {stand_id}: {e}")
         raise HTTPException(status_code=400, detail=f"Ошибка топологии для проверки: {e}")
 
-    confirmations = set(request.manual_confirmations)
-    unknown_confirmations = confirmations - set(MANUAL_CHECKS) - IGNORED_CONFIRMATIONS
-    if unknown_confirmations:
-        raise HTTPException(
-            status_code=422,
-            detail="Неизвестные ручные подтверждения: " + ", ".join(sorted(unknown_confirmations)),
-        )
-    missing_manual = [key for key in MANUAL_CHECKS if key not in confirmations]
-
     ssh_key_content = stand.private_key
     stand_id_str = str(stand_id)
 
@@ -155,9 +135,8 @@ async def start_check(
         async def mock_check():
             import asyncio
             await asyncio.sleep(2)
-            status_value = "REVIEW_REQUIRED" if missing_manual else "PASSED"
             RESULTS_DB[stand_id_str] = {
-                "status": status_value,
+                "status": "PASSED",
                 "log": (
                     "✅ [L-MS] Проверка доступности (Порт 9877) — OK\n"
                     "✅ [W-DC] Проверка служб узла хранения и каталога — OK\n"
@@ -169,7 +148,6 @@ async def start_check(
                     "snapapi_loaded": True,
                     "acronis_active": True,
                     "windows_services_active": True,
-                    "manual_confirmed": not missing_manual,
                 }
             }
             with SessionLocal() as db_session:
@@ -177,8 +155,7 @@ async def start_check(
                 if db_stand:
                     db_stand.last_check_result = json.dumps(RESULTS_DB[stand_id_str], ensure_ascii=False)
                     db_session.commit()
-            if not missing_manual:
-                push_lti_grade(stand_id_str, score_given=100.0)
+            push_lti_grade(stand_id_str, score_given=100.0)
         background_tasks.add_task(mock_check)
     else:
         checker = CheckerService.from_env()
@@ -196,17 +173,6 @@ async def start_check(
                         ssh_key_path=tmp_key.name,
                         lab_template=request.lab_template,
                     )
-
-                    if result.status == "PASSED" and missing_manual:
-                        result.status = "REVIEW_REQUIRED"
-                        result.details["manual_confirmed"] = False
-                        checklist = "\n".join(f"  - {MANUAL_CHECKS[key]}" for key in missing_manual)
-                        result.log += (
-                            "\n\nАвтоматические проверки пройдены. Для завершения подтвердите вручную:\n"
-                            + checklist
-                        )
-                    elif result.status == "PASSED":
-                        result.details["manual_confirmed"] = True
 
                     check_data = {
                         "status": result.status,

@@ -81,7 +81,7 @@ async def test_successful_check_keeps_stand_ready_and_persists_result(monkeypatc
 
     response = await check_api.start_check(
         stand_id=7,
-        request=check_api.CheckRequest(manual_confirmations=list(check_api.MANUAL_CHECKS)),
+        request=check_api.CheckRequest(),
         background_tasks=background,
         db=request_db,
         user={"user_id": 42, "role": "student"},

@@ -82,7 +82,6 @@ class FreezeResponse(BaseModel):
 
 class CheckRequest(BaseModel):
     lab_template: str = Field(default="lab03_cyber", pattern=r"^[a-z0-9_]+$")
-    manual_confirmations: List[str] = Field(default_factory=list)
 
 
 class CheckResponse(BaseModel):

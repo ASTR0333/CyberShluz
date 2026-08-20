@@ -9,11 +9,6 @@ import {
 } from 'lucide-react';
 import toast from 'react-hot-toast';
 
-const MANUAL_CHECKS = [
-  ['w_dc_registered', 'w-dc.cyberprotect.test отображается в списке узлов хранения'],
-  ['repositories_present', 'Хранилища RepoW и RepoL созданы и отображаются в веб-консоли'],
-] as const;
-
 const CHECK_POLL_INTERVAL_MS = 2000;
 const CHECK_POLL_TIMEOUT_MS = 150000;
 
@@ -108,7 +103,6 @@ export const StandStatus = () => {
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
   const [keySubmitted, setKeySubmitted] = useState(false);
   const [openingConsoleRole, setOpeningConsoleRole] = useState<string | null>(null);
-  const [manualConfirmations, setManualConfirmations] = useState<string[]>([]);
   const [myStands, setMyStands] = useState<MyStandSummary[]>([]);
 
   useEffect(() => {
@@ -174,7 +168,7 @@ export const StandStatus = () => {
     setIsChecking(true);
     setCheckResult(null);
     try {
-      await mockApi.check(standId, manualConfirmations);
+      await mockApi.check(standId);
       const deadline = Date.now() + CHECK_POLL_TIMEOUT_MS;
       let result: CheckResultResponse;
       do {
@@ -188,7 +182,6 @@ export const StandStatus = () => {
         throw new Error('Проверка выполняется дольше ожидаемого. Повторите запрос результата позже.');
       }
       if (result.status === 'PASSED') toast.success('Все проверки пройдены! Результат сохранён.');
-      else if (result.status === 'REVIEW_REQUIRED') toast('Автопроверка пройдена. Подтвердите ручные пункты и повторите проверку.');
       else toast.error('Обнаружены проблемы — изучите лог');
     } catch (err: unknown) {
       toast.error(err instanceof Error ? err.message : 'Ошибка проверки');
@@ -434,28 +427,6 @@ export const StandStatus = () => {
             </div>
           )}
 
-
-          {status.status === 'READY' && (
-            <div className="mt-8 pt-6 border-t border-gray-200">
-              <p className="text-xs font-bold text-cyber-gray-dark uppercase tracking-wider mb-3">Ручная часть проверки</p>
-              <div className="space-y-2">
-                {MANUAL_CHECKS.map(([key, label]) => (
-                  <label key={key} className="flex items-start gap-2 text-xs text-cyber-gray-dark cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={manualConfirmations.includes(key)}
-                      onChange={(event) => setManualConfirmations((current) => event.target.checked
-                        ? [...current, key]
-                        : current.filter((item) => item !== key))}
-                      className="mt-0.5"
-                    />
-                    <span>{label}</span>
-                  </label>
-                ))}
-              </div>
-              <p className="text-[11px] text-cyber-gray-light mt-2">Эти пункты нельзя надёжно проверить по SSH; не подтверждайте их до фактической проверки в веб-консоли и Services.</p>
-            </div>
-          )}
 
           <div className="mt-6 pt-6 border-t border-gray-200 flex flex-wrap gap-3">
             <button

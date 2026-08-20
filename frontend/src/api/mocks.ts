@@ -132,12 +132,11 @@ export const mockApi = {
       body: JSON.stringify({ reason: reason || 'Запрос помощи' }),
     }),
 
-  check: (stand_id: string, manual_confirmations: string[] = [], lab_template?: string): Promise<CheckResponse> =>
+  check: (stand_id: string, lab_template?: string): Promise<CheckResponse> =>
     apiFetch(`/check/${stand_id}`, {
       method: 'POST',
       body: JSON.stringify({
         lab_template: lab_template || 'lab03_cyber',
-        manual_confirmations,
       }),
     }),
 
