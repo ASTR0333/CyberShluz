@@ -16,6 +16,7 @@ import type {
 } from '../types/api';
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || '/api/v1';
+const SSH_KEY_INSTALL_TIMEOUT_MS = 180_000;
 
 
 
@@ -150,7 +151,7 @@ export const mockApi = {
     apiFetch(`/stand/${stand_id}/pubkey`, {
       method: 'POST',
       body: JSON.stringify(req),
-    }),
+    }, SSH_KEY_INSTALL_TIMEOUT_MS),
 
   createConsoleLink: (stand_id: string, vm_role: string): Promise<ConsoleLinkResponse> =>
     apiFetch(`/stand/${stand_id}/console/${encodeURIComponent(vm_role)}`, { method: 'POST' }),
