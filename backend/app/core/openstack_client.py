@@ -503,6 +503,7 @@ class OpenStackClient:
             progress_cb(95, "Назначение Floating IP для Linux-ВМ...")
 
         floating_ip_errors: list[str] = []
+        reserved_floating_ips: set[str] = set()
         for vm_role in linux_roles:
             vm_info = results.get(vm_role)
             if vm_info and vm_info["status"] == "ACTIVE":
@@ -511,6 +512,7 @@ class OpenStackClient:
                         conn,
                         vm_info["server_id"],
                         deployment.network.external_network,
+                        reserved_floating_ips,
                     )
                     if floating_ip:
                         vm_info["floating_ip"] = floating_ip
@@ -1233,59 +1235,94 @@ printf 'kibershluz-bootstrap-ok\n'
             pass
         return sg
 
-    def _assign_floating_ip(self, conn, server_id: str, external_network: str = "Public") -> str:
+    def _assign_floating_ip(
+        self,
+        conn,
+        server_id: str,
+        external_network: str = "Public",
+        reserved_ips: set[str] | None = None,
+    ) -> str:
+        """Attach one verified, unique Floating IP to a server.
+
+        Neutron can briefly keep a just-associated address in a ``DOWN`` list.
+        A deployment-level reservation set prevents the next Linux VM from
+        selecting that same address and moving it away from the previous VM.
+        """
+        reserved_ips = reserved_ips if reserved_ips is not None else set()
         server = conn.compute.get_server(server_id)
         if server.addresses:
             for net_addrs in server.addresses.values():
                 for addr in net_addrs:
                     if addr.get("OS-EXT-IPS:type") == "floating":
-                        return addr["addr"]
-
-        for fip in conn.network.ips(status="DOWN"):
-            try:
-                server = conn.compute.get_server(server_id)
-                port = None
-                for net_addrs in server.addresses.values():
-                    for addr in net_addrs:
-                        if addr.get("OS-EXT-IPS:type") == "fixed":
-                            ports = list(conn.network.ports(
-                                device_id=server_id,
-                                fixed_ips=f"ip_address={addr['addr']}"
-                            ))
-                            if ports:
-                                port = ports[0]
-                                break
-                    if port:
-                        break
-                if port:
-                    conn.network.update_ip(fip, port_id=port.id)
-                    return fip.floating_ip_address
-            except Exception:
-                continue
+                        floating_ip = addr["addr"]
+                        if floating_ip in reserved_ips:
+                            continue
+                        reserved_ips.add(floating_ip)
+                        return floating_ip
 
         ext_net = conn.network.find_network(external_network)
-        if ext_net:
+        if not ext_net:
+            raise RuntimeError(f"External network '{external_network}' was not found")
+
+        port = None
+        for net_addrs in (server.addresses or {}).values():
+            for addr in net_addrs:
+                if addr.get("OS-EXT-IPS:type") != "fixed":
+                    continue
+                ports = list(
+                    conn.network.ports(
+                        device_id=server_id,
+                        fixed_ips=f"ip_address={addr['addr']}",
+                    )
+                )
+                if ports:
+                    port = ports[0]
+                    break
+            if port:
+                break
+        if not port:
+            raise RuntimeError(f"Neutron port was not found for server {server_id}")
+
+        def bind_and_verify(fip) -> str:
+            updated = conn.network.update_ip(fip, port_id=port.id)
+            floating_id = getattr(updated, "id", None) or getattr(fip, "id", None)
+            refreshed = conn.network.get_ip(floating_id) if floating_id else updated
+            bound_port_id = getattr(refreshed, "port_id", None)
+            if bound_port_id != port.id:
+                raise RuntimeError(
+                    f"Floating IP association was not confirmed for server {server_id}: "
+                    f"expected port {port.id}, got {bound_port_id or 'none'}"
+                )
+            floating_ip = getattr(refreshed, "floating_ip_address", None)
+            if not floating_ip:
+                floating_ip = getattr(updated, "floating_ip_address", None)
+            if not floating_ip:
+                floating_ip = getattr(fip, "floating_ip_address", None)
+            if not floating_ip:
+                raise RuntimeError("Neutron returned a Floating IP without an address")
+            reserved_ips.add(floating_ip)
+            return floating_ip
+
+        for fip in conn.network.ips(status="DOWN"):
+            floating_ip = getattr(fip, "floating_ip_address", None)
+            if not floating_ip or floating_ip in reserved_ips:
+                continue
+            if getattr(fip, "port_id", None):
+                continue
+            floating_network_id = getattr(fip, "floating_network_id", None)
+            if floating_network_id and floating_network_id != ext_net.id:
+                continue
             try:
-                fip = conn.network.create_ip(floating_network_id=ext_net.id)
-                server = conn.compute.get_server(server_id)
-                port = None
-                for net_addrs in server.addresses.values():
-                    for addr in net_addrs:
-                        if addr.get("OS-EXT-IPS:type") == "fixed":
-                            ports = list(conn.network.ports(
-                                device_id=server_id,
-                                fixed_ips=f"ip_address={addr['addr']}"
-                            ))
-                            if ports:
-                                port = ports[0]
-                                break
-                    if port:
-                        break
-                if port:
-                    conn.network.update_ip(fip, port_id=port.id)
-                    return fip.floating_ip_address
-            except Exception as e:
-                print(f"[OpenStack] Create floating IP failed: {e}")
+                return bind_and_verify(fip)
+            except Exception as exc:
+                print(f"[OpenStack] Reuse floating IP {floating_ip} failed: {exc}")
+                continue
+
+        try:
+            fip = conn.network.create_ip(floating_network_id=ext_net.id)
+            return bind_and_verify(fip)
+        except Exception as e:
+            print(f"[OpenStack] Create floating IP failed: {e}")
         return ""
 
     def cleanup_lab3_stand(self, stand_id: str):

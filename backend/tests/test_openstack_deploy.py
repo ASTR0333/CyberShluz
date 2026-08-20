@@ -70,7 +70,7 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
         "_ensure_security_group",
         lambda *_args: SimpleNamespace(name="stand1-sg"),
     )
-    def assign_floating_ip(_conn, server_id, _external_network):
+    def assign_floating_ip(_conn, server_id, _external_network, _reserved_ips):
         floating_ip_calls.append(server_id)
         return {
             "stand1-L-MS": "203.0.113.10",
@@ -109,6 +109,76 @@ def test_linux_servers_get_direct_floating_ips_and_ssh_bootstrap(monkeypatch) ->
         ("L-NFS", "203.0.113.70"),
         ("L-PGSQL", "203.0.113.55"),
     ]
+
+
+def test_floating_ip_is_not_reused_while_neutron_still_reports_it_down() -> None:
+    class FakeCompute:
+        def get_server(self, server_id):
+            fixed_ip = "10.10.0.10" if server_id == "lms" else "10.10.0.70"
+            return SimpleNamespace(
+                id=server_id,
+                addresses={
+                    "stand-net": [
+                        {"OS-EXT-IPS:type": "fixed", "addr": fixed_ip},
+                    ]
+                },
+            )
+
+    class FakeNetwork:
+        def __init__(self):
+            self.available = SimpleNamespace(
+                id="fip-1",
+                floating_ip_address="203.0.113.10",
+                floating_network_id="public-id",
+                port_id=None,
+            )
+            self.created = []
+            self.bindings = {}
+
+        def find_network(self, _name):
+            return SimpleNamespace(id="public-id")
+
+        def ports(self, device_id, **_kwargs):
+            return [SimpleNamespace(id=f"port-{device_id}")]
+
+        def ips(self, **_kwargs):
+            # Simulate an eventually consistent DOWN listing: even after the
+            # first bind it keeps returning the same stale resource.
+            return [self.available]
+
+        def create_ip(self, floating_network_id):
+            fip = SimpleNamespace(
+                id=f"fip-{len(self.created) + 2}",
+                floating_ip_address=f"203.0.113.{20 + len(self.created)}",
+                floating_network_id=floating_network_id,
+                port_id=None,
+            )
+            self.created.append(fip)
+            return fip
+
+        def update_ip(self, fip, port_id):
+            self.bindings[fip.id] = port_id
+            return SimpleNamespace(**{**vars(fip), "port_id": port_id})
+
+        def get_ip(self, floating_id):
+            candidates = [self.available, *self.created]
+            fip = next(item for item in candidates if item.id == floating_id)
+            return SimpleNamespace(
+                **{**vars(fip), "port_id": self.bindings.get(floating_id)}
+            )
+
+    network = FakeNetwork()
+    connection = SimpleNamespace(compute=FakeCompute(), network=network)
+    client = OpenStackClient()
+    reserved_ips = set()
+
+    lms_ip = client._assign_floating_ip(connection, "lms", "Public", reserved_ips)
+    nfs_ip = client._assign_floating_ip(connection, "nfs", "Public", reserved_ips)
+
+    assert lms_ip == "203.0.113.10"
+    assert nfs_ip == "203.0.113.20"
+    assert network.bindings == {"fip-1": "port-lms", "fip-2": "port-nfs"}
+    assert reserved_ips == {"203.0.113.10", "203.0.113.20"}
 
 
 def test_windows_user_data_enables_rdp_only_for_tunnelled_private_access() -> None:
