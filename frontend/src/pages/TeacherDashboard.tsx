@@ -100,7 +100,7 @@ export const TeacherDashboard = () => {
   return (
     <div className="max-w-7xl mx-auto space-y-6">
       <div>
-        <p className="text-[11px] font-bold text-cyber-blue-accent uppercase tracking-[0.18em]">Киберполигон</p>
+        <p className="text-[11px] font-bold text-cyber-blue-accent uppercase tracking-[0.18em]">КиберШлюз</p>
         <h1 className="text-2xl sm:text-[28px] text-cyber-blue-dark font-black tracking-[-0.025em] mt-1 mb-5">Мониторинг инфраструктуры</h1>
 
         <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 bg-white p-3 rounded-t-brand border border-cyber-gray-border border-b-0 shadow-[0_8px_24px_rgba(0,32,77,0.04)]">

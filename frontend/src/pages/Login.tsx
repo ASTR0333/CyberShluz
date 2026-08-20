@@ -46,16 +46,14 @@ export const Login = () => {
         />
 
         <div className="relative max-w-xl py-14">
-          <p className="text-xs font-bold uppercase tracking-[0.24em] text-cyber-blue-light mb-5">Учебная платформа</p>
           <h1 className="text-5xl xl:text-6xl font-black leading-[0.98] tracking-[-0.045em]">
-            Управляйте<br />киберполигоном<br />в едином окне
+            Управляйте<br />КиберШлюзом<br />в едином окне
           </h1>
           <p className="max-w-md mt-7 text-base leading-7 text-white/70">
             Изолированные лабораторные стенды, прозрачный контроль ресурсов и безопасная оркестрация инфраструктуры.
           </p>
         </div>
 
-        <p className="relative text-xs text-white/45">КИБЕРПРОТЕКТ · Защищаем цифровой мир</p>
       </section>
 
       <section className="brand-surface flex min-h-screen items-center justify-center px-5 py-12 sm:px-10">
@@ -68,7 +66,6 @@ export const Login = () => {
           />
 
           <div className="mb-8">
-            <p className="text-[11px] font-bold text-cyber-blue-accent uppercase tracking-[0.2em] mb-2">Киберполигон</p>
             <h2 className="text-3xl sm:text-4xl font-black tracking-[-0.035em] text-cyber-blue-dark">Вход в систему</h2>
             <p className="text-sm text-cyber-gray-light mt-3">Используйте учётную запись учебной платформы.</p>
           </div>

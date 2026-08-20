@@ -215,7 +215,6 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
           </button>
           <img src={cyberLogo} alt="КИБЕРПРОТЕКТ" className="h-9 sm:h-10 w-auto max-w-[194px] sm:max-w-[215px] select-none" />
           <div className="h-8 w-px bg-cyber-gray-border hidden md:block" />
-          <span className="hidden xl:inline text-xs font-semibold text-cyber-gray-light">Учебная оркестрация</span>
           <CapacityBadge />
         </div>
         <UserMenu auth={auth} />
@@ -224,7 +223,7 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
       <div className="flex-1 flex overflow-hidden relative">
         <nav className="hidden lg:flex w-16 bg-cyber-blue-dark flex-shrink-0 flex-col items-center z-10">
           <div className="w-full flex flex-col items-center gap-2">
-            <div className="w-full h-16 flex items-center justify-center text-white bg-cyber-blue border-l-[3px] border-cyber-blue-light" title="Киберполигон">
+            <div className="w-full h-16 flex items-center justify-center text-white bg-cyber-blue border-l-[3px] border-cyber-blue-light" title="КиберШлюз">
               <Box className="w-5 h-5" strokeWidth={1.8} />
             </div>
           </div>
@@ -241,7 +240,7 @@ function ProtectedLayout({ auth, children }: { auth: AuthInfo; children: React.R
 
         <aside className={`${navOpen ? 'translate-x-0' : '-translate-x-full'} lg:translate-x-0 absolute lg:static inset-y-0 left-0 w-[min(19rem,86vw)] lg:w-64 bg-white border-r border-cyber-gray-border flex-shrink-0 flex flex-col z-20 transition-transform duration-200 shadow-2xl lg:shadow-none`}>
           <div className="px-5 py-5 border-b border-cyber-gray-border">
-            <h2 className="text-base font-bold text-cyber-blue-dark">Киберполигон</h2>
+            <h2 className="text-base font-bold text-cyber-blue-dark">КиберШлюз</h2>
             <p className="text-xs text-cyber-gray-light mt-1">Управление учебными стендами</p>
           </div>
 
