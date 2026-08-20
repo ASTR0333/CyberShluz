@@ -450,11 +450,11 @@ docker compose up -d --build
 <span class="c">#    (app.main.lifespan), миграции схемы применяются идемпотентно.</span></pre>
     <table>
       <tr><th>Сервис</th><th>Роль</th></tr>
-      <tr><td><code>backend</code></td><td>FastAPI (REST + LTI + WebSocket-терминал).</td></tr>
+      <tr><td><code>backend</code></td><td>FastAPI (REST + LTI + ссылки на веб-консоль КИ).</td></tr>
       <tr><td><code>celery_worker</code> / <code>celery_beat</code></td><td>Асинхронные задачи и реконсиляция TTL.</td></tr>
       <tr><td><code>db</code> / <code>redis</code></td><td>PostgreSQL (состояния/пул/логи) и брокер задач.</td></tr>
       <tr><td><code>frontend</code></td><td>Собранная React-SPA (nginx-unprivileged).</td></tr>
-      <tr><td><code>nginx-proxy</code></td><td>Единая точка входа :80, проксирование REST/WS.</td></tr>
+      <tr><td><code>nginx-proxy</code></td><td>Единая точка входа :80, проксирование REST.</td></tr>
     </table>
   </section>
 
