@@ -152,8 +152,8 @@ export const mockApi = {
       body: JSON.stringify(req),
     }),
 
-  createConsoleLink: (stand_id: string): Promise<ConsoleLinkResponse> =>
-    apiFetch(`/stand/${stand_id}/console`, { method: 'POST' }),
+  createConsoleLink: (stand_id: string, vm_role: string): Promise<ConsoleLinkResponse> =>
+    apiFetch(`/stand/${stand_id}/console/${encodeURIComponent(vm_role)}`, { method: 'POST' }),
 
 
   getStands: (): Promise<StudentStand[]> => apiFetch('/admin/stands'),

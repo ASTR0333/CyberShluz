@@ -548,7 +548,7 @@ class OpenStackClient:
     @staticmethod
     def build_user_data(vm_role: str, admin_pubkey: str, student_pubkey: str) -> str:
         """Build a key-only access policy for Linux and Windows cloud images."""
-        if vm_role in {"W-DC", "V-HYPERV"}:
+        if vm_role.upper().startswith("W") or vm_role.upper() == "V-HYPERV":
             return OpenStackClient._build_windows_user_data(admin_pubkey, student_pubkey)
         return OpenStackClient._build_linux_user_data(admin_pubkey, student_pubkey)
 

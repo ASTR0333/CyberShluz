@@ -11,7 +11,7 @@ from app.core.database import engine, Base
 import app.core.models   
 
  
-from app.api.v1 import auth, deploy, status, freeze, check, cleanup, moodle, admin, pubkey, lti, terminal, console
+from app.api.v1 import auth, deploy, status, freeze, check, cleanup, moodle, admin, pubkey, lti, console
 
  
 @asynccontextmanager
@@ -179,7 +179,6 @@ app.include_router(moodle.router, prefix="/api/v1", tags=["Moodle Integration"])
 app.include_router(admin.router, prefix="/api/v1", tags=["Admin"])
 app.include_router(pubkey.router, prefix="/api/v1", tags=["SSH Key"])
 app.include_router(lti.router, prefix="/api/v1", tags=["LTI 1.3 (Этап 4)"])
-app.include_router(terminal.router, prefix="/api/v1", tags=["Web Terminal"])
 app.include_router(console.router, prefix="/api/v1", tags=["VM Console"])
 
  

@@ -3,7 +3,6 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { getAuth, mockApi } from '../api/mocks';
 import type { StandStatusResponse, CheckResultResponse, MyStandSummary } from '../types/api';
 import { ProgressBadge } from '../components/ProgressBadge';
-import { StandTerminal } from '../components/StandTerminal';
 import {
   ShieldCheck, Loader2, Globe, Clock, Terminal as TerminalIcon,
   Info, Snowflake, Trash2, Server, Monitor, Copy, Rocket, Key, CheckCircle2, MonitorPlay
@@ -108,8 +107,7 @@ export const StandStatus = () => {
   const [pubkeyInput, setPubkeyInput] = useState('');
   const [isSubmittingKey, setIsSubmittingKey] = useState(false);
   const [keySubmitted, setKeySubmitted] = useState(false);
-  const [terminalOpen, setTerminalOpen] = useState(false);
-  const [isOpeningConsole, setIsOpeningConsole] = useState(false);
+  const [openingConsoleRole, setOpeningConsoleRole] = useState<string | null>(null);
   const [manualConfirmations, setManualConfirmations] = useState<string[]>([]);
   const [myStands, setMyStands] = useState<MyStandSummary[]>([]);
 
@@ -245,7 +243,7 @@ export const StandStatus = () => {
     }
   };
 
-  const handleOpenWdc = async () => {
+  const handleOpenConsole = async (vmRole: string) => {
     if (!standId) return;
     const tab = window.open('about:blank', '_blank');
     if (!tab) {
@@ -253,23 +251,23 @@ export const StandStatus = () => {
       return;
     }
     tab.opener = null;
-    tab.document.title = 'Подключение к W-DC';
+    tab.document.title = `Подключение к ${vmRole}`;
     tab.document.body.style.cssText = 'margin:0;min-height:100vh;display:grid;place-items:center;background:#111827;color:#e5e7eb;font:16px system-ui,sans-serif';
     const popupStatus = tab.document.createElement('p');
-    popupStatus.textContent = 'Открываем консоль W-DC в КИ…';
+    popupStatus.textContent = `Открываем консоль ${vmRole} в КИ…`;
     tab.document.body.replaceChildren(popupStatus);
-    setIsOpeningConsole(true);
+    setOpeningConsoleRole(vmRole);
     try {
-      const consoleLink = await mockApi.createConsoleLink(standId);
+      const consoleLink = await mockApi.createConsoleLink(standId, vmRole);
       tab.location.replace(consoleLink.launch_url);
-      toast.success('Консоль W-DC открыта в КИ');
+      toast.success(`Консоль ${vmRole} открыта в КИ`);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : 'Не удалось открыть W-DC';
+      const message = err instanceof Error ? err.message : `Не удалось открыть ${vmRole}`;
       popupStatus.textContent = message;
       popupStatus.style.color = '#fca5a5';
       toast.error(message);
     } finally {
-      setIsOpeningConsole(false);
+      setOpeningConsoleRole(null);
     }
   };
 
@@ -330,14 +328,14 @@ export const StandStatus = () => {
   const isActive = ['READY', 'DEPLOYING', 'PENDING', 'FAILED'].includes(status.status);
   const isFrozen = status.status === 'FREEZE';
   const sshUser = 'student';
-  const sshCmd = status.ip_address ? `ssh ${sshUser}@${status.ip_address}` : null;
-  const lmsInternalIp = status.vms?.['L-MS']?.ip || status.vms?.['L-MS']?.expected_ip;
-  const wdcInternalIp = status.vms?.['W-DC']?.ip || status.vms?.['W-DC']?.expected_ip;
-  const wdcServerId = status.vms?.['W-DC']?.server_id;
-  const managementUrl = status.ip_address ? `https://${status.ip_address}:9877` : null;
-  const rdpTunnelCmd = status.ip_address && wdcInternalIp
-    ? `ssh -L 13389:${wdcInternalIp}:3389 ${sshUser}@${status.ip_address}`
-    : null;
+  const linuxVms = Object.entries(status.vms || {}).filter(([role]) => role.toLowerCase().startsWith('l'));
+
+  const sshCommandFor = (role: string, internalIp?: string) => {
+    if (!status.ip_address) return null;
+    if (role.toUpperCase() === 'L-MS') return `ssh ${sshUser}@${status.ip_address}`;
+    if (!internalIp) return null;
+    return `ssh -J ${sshUser}@${status.ip_address} ${sshUser}@${internalIp}`;
+  };
 
   return (
     <div className="max-w-5xl mx-auto space-y-6">
@@ -474,26 +472,6 @@ export const StandStatus = () => {
             </button>
 
             <button
-              onClick={() => setTerminalOpen(true)}
-              disabled={status.status !== 'READY' || !status.ip_address}
-              className="flex items-center px-5 py-2.5 bg-cyber-blue text-white rounded-brand font-semibold hover:bg-cyber-blue-accent disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
-            >
-              <TerminalIcon className="w-5 h-5 mr-2" />
-              Веб-терминал
-            </button>
-
-            <button
-              onClick={handleOpenWdc}
-              disabled={status.status !== 'READY' || !wdcServerId || isOpeningConsole}
-              className="flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
-            >
-              {isOpeningConsole
-                ? <Loader2 className="w-5 h-5 mr-2 animate-spin" />
-                : <MonitorPlay className="w-5 h-5 mr-2" />}
-              Открыть W-DC
-            </button>
-
-            <button
               onClick={handleFreeze}
               disabled={!isActive || isFreezing}
               className="flex items-center px-5 py-2.5 bg-cyber-blue-accent text-white rounded-brand font-semibold hover:bg-cyber-blue disabled:bg-gray-200 disabled:text-gray-400 transition-colors shadow-sm"
@@ -568,7 +546,7 @@ export const StandStatus = () => {
                 {keySubmitted ? (
                   <div className="flex items-center gap-2 text-green-400 text-xs bg-green-900/20 border border-green-800 rounded p-2.5">
                     <CheckCircle2 size={14} className="flex-shrink-0" />
-                    Ключ добавлен — можешь подключаться!
+                    Ключ добавлен на все Linux-машины — можешь подключаться!
                   </div>
                 ) : (
                   <div className="space-y-2">
@@ -587,7 +565,7 @@ export const StandStatus = () => {
                       {isSubmittingKey
                         ? <Loader2 className="w-4 h-4 mr-2 animate-spin" />
                         : <Key className="w-4 h-4 mr-2" />}
-                      Добавить ключ на стенд
+                      Добавить ключ на все Linux-машины
                     </button>
                   </div>
                 )}
@@ -595,23 +573,35 @@ export const StandStatus = () => {
 
 
               <div>
-                <p className="font-bold mb-1.5 text-gray-300 text-xs uppercase tracking-wider flex items-center gap-1.5">
+                <p className="font-bold mb-2 text-gray-300 text-xs uppercase tracking-wider flex items-center gap-1.5">
                   <span className={`${keySubmitted ? 'bg-green-600' : 'bg-gray-600'} text-white rounded-full w-4 h-4 inline-flex items-center justify-center text-[10px] font-bold flex-shrink-0`}>4</span>
-                  Подключайся
+                  Подключайся к Linux
                 </p>
-                {sshCmd ? (
-                  <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center group">
-                    <code className="text-cyber-blue-light text-[11px] break-all pr-2">{sshCmd}</code>
-                    <button
-                      onClick={() => copyToClipboard(sshCmd)}
-                      className="text-gray-400 hover:text-white flex-shrink-0 transition-colors"
-                    ><Copy size={12} /></button>
-                  </div>
-                ) : (
-                  <div className="bg-black/50 p-2.5 rounded border border-gray-800 text-[11px] text-gray-500 italic">
-                    Команда появится, когда стенд получит IP
-                  </div>
-                )}
+                <div className="space-y-2">
+                  {linuxVms.map(([role, vm]) => {
+                    const internalIp = vm.ip || vm.expected_ip;
+                    const command = sshCommandFor(role, internalIp);
+                    return (
+                      <div key={role}>
+                        <p className="text-[10px] font-bold text-gray-400 mb-1">{role} · {internalIp || 'IP ожидается'}</p>
+                        {command ? (
+                          <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center group">
+                            <code className="text-cyber-blue-light text-[11px] break-all pr-2">{command}</code>
+                            <button
+                              onClick={() => copyToClipboard(command)}
+                              aria-label={`Скопировать команду SSH для ${role}`}
+                              className="text-gray-400 hover:text-white flex-shrink-0 transition-colors"
+                            ><Copy size={12} /></button>
+                          </div>
+                        ) : (
+                          <div className="bg-black/50 p-2.5 rounded border border-gray-800 text-[11px] text-gray-500 italic">
+                            Команда появится, когда стенд получит IP
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
               </div>
 
             </div>
@@ -625,33 +615,6 @@ export const StandStatus = () => {
               </div>
             </div>
 
-            <div className="pt-4 border-t border-gray-700 space-y-3 text-xs">
-              <p className="font-bold text-gray-300 uppercase tracking-wider">Работа по методичке</p>
-              {lmsInternalIp && (
-                <p className="text-gray-400">
-                  Вместо адреса <span className="font-mono">10.0.0.10</span> из методички используйте фактический IP L-MS:{' '}
-                  <span className="font-mono text-cyber-blue-light">{lmsInternalIp}</span>.
-                </p>
-              )}
-              {managementUrl && (
-                <div>
-                  <p className="text-gray-400 mb-1">Веб-консоль Кибер Бэкап с вашего компьютера</p>
-                  <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center gap-2">
-                    <code className="text-cyber-blue-light text-[11px] break-all">{managementUrl}</code>
-                    <button onClick={() => copyToClipboard(managementUrl)} className="text-gray-400 hover:text-white flex-shrink-0"><Copy size={12} /></button>
-                  </div>
-                </div>
-              )}
-              {rdpTunnelCmd && (
-                <div>
-                  <p className="text-gray-400 mb-1">Резервный ручной доступ к W-DC: запустите туннель, затем откройте RDP на localhost:13389</p>
-                  <div className="bg-black p-2.5 rounded border border-gray-700 flex justify-between items-center gap-2">
-                    <code className="text-cyber-blue-light text-[11px] break-all">{rdpTunnelCmd}</code>
-                    <button onClick={() => copyToClipboard(rdpTunnelCmd)} className="text-gray-400 hover:text-white flex-shrink-0"><Copy size={12} /></button>
-                  </div>
-                </div>
-              )}
-            </div>
           </div>
         </div>
       </div>
@@ -686,6 +649,18 @@ export const StandStatus = () => {
                   }`}>
                     {isVmActive ? 'Активна' : isVmBuilding ? 'Создаётся...' : 'Ошибка'}
                   </p>
+                  {role.toLowerCase().startsWith('w') && (
+                    <button
+                      onClick={() => handleOpenConsole(role)}
+                      disabled={status.status !== 'READY' || !vm.server_id || openingConsoleRole !== null}
+                      className="mt-2 w-full inline-flex items-center justify-center px-2 py-1.5 bg-cyber-blue-accent text-white rounded text-[11px] font-semibold hover:bg-cyber-blue disabled:bg-gray-200 disabled:text-gray-400 transition-colors"
+                    >
+                      {openingConsoleRole === role
+                        ? <Loader2 className="w-3.5 h-3.5 mr-1 animate-spin" />
+                        : <MonitorPlay className="w-3.5 h-3.5 mr-1" />}
+                      Веб-консоль
+                    </button>
+                  )}
                 </div>
               );
             })}
@@ -748,10 +723,6 @@ export const StandStatus = () => {
             )}
           </div>
         </div>
-      )}
-
-      {terminalOpen && standId && (
-        <StandTerminal standId={standId} onClose={() => setTerminalOpen(false)} />
       )}
     </div>
   );

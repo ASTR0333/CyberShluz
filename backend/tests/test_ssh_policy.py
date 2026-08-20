@@ -44,6 +44,13 @@ def test_windows_cloudbase_init_uses_keys_and_standard_student() -> None:
     assert STUDENT_KEY in user_data
 
 
+def test_every_w_prefixed_role_uses_windows_cloudbase_init() -> None:
+    user_data = OpenStackClient.build_user_data("W-CLIENT", ADMIN_KEY, STUDENT_KEY)
+
+    assert user_data.startswith("#ps1")
+    assert "OpenSSH.Server" in user_data
+
+
 def test_legacy_bootstrap_creates_separate_users_and_disables_passwords() -> None:
     script = OpenStackClient._legacy_bootstrap_script()
 

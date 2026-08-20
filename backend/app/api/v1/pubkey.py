@@ -1,4 +1,5 @@
 import io
+import json
 import shlex
 import socket
 import time
@@ -44,7 +45,7 @@ def get_privkey(stand_id: str, db: Session = Depends(get_db), _=Depends(require_
 @router.post(
     "/stand/{stand_id}/pubkey",
     summary="Добавить SSH-ключ студента на стенд",
-    description="Принимает публичный ключ студента и добавляет его в authorized_keys на L-MS.",
+    description="Принимает публичный ключ студента и добавляет его на все Linux-машины стенда.",
 )
 def add_pubkey(stand_id: str, body: PubkeyRequest, db: Session = Depends(get_db), user=Depends(require_student)):
     stand = db.query(Stand).filter(Stand.id == int(stand_id)).first()
@@ -62,8 +63,36 @@ def add_pubkey(stand_id: str, body: PubkeyRequest, db: Session = Depends(get_db)
     if not pub.startswith(("ssh-", "ecdsa-", "sk-")):
         raise HTTPException(status_code=422, detail="Некорректный формат публичного ключа")
 
-    _push_pubkey(stand.ip_address, stand.private_key, pub)
-    return {"message": "Ключ успешно добавлен. Подключайтесь: ssh student@" + stand.ip_address}
+    linux_targets = _linux_targets(stand.vm_details)
+    _push_pubkey_to_linux_hosts(stand.ip_address, stand.private_key, pub, linux_targets)
+    return {
+        "message": (
+            "Ключ успешно добавлен на все Linux-машины стенда. "
+            f"Подключайтесь к L-MS: ssh student@{stand.ip_address}"
+        )
+    }
+
+
+def _linux_targets(vm_details: str | None) -> list[tuple[str, str | None]]:
+    """Return every L-prefixed VM and its internal address.
+
+    Old stands may not have persisted VM details. They still expose L-MS via
+    ``stand.ip_address``, so keep that target as a backwards-compatible fallback.
+    """
+    try:
+        vms = json.loads(vm_details or "{}")
+    except (TypeError, json.JSONDecodeError):
+        vms = {}
+    if not isinstance(vms, dict):
+        vms = {}
+
+    targets = []
+    for role, details in vms.items():
+        if not str(role).lower().startswith("l") or not isinstance(details, dict):
+            continue
+        internal_ip = details.get("ip") or details.get("expected_ip")
+        targets.append((str(role), str(internal_ip) if internal_ip else None))
+    return targets or [("L-MS", None)]
 
 
 def _load_pkey(private_key_str: str):
@@ -108,7 +137,37 @@ def _connect_with_key(ip: str, user: str, pkey, max_wait: int):
     raise last_err
 
 
-def _push_pubkey(ip: str, system_private_key: str, student_public_key: str, max_wait: int = 30):
+def _authorized_keys_command(student_public_key: str) -> str:
+    script = f"""set -eu
+student_home=$(getent passwd student | cut -d: -f6)
+test -n "$student_home"
+install -d -m 0700 -o student -g student "$student_home/.ssh"
+printf '%s\\n' {shlex.quote(student_public_key)} >> "$student_home/.ssh/authorized_keys"
+sort -u "$student_home/.ssh/authorized_keys" -o "$student_home/.ssh/authorized_keys"
+chown student:student "$student_home/.ssh/authorized_keys"
+chmod 0600 "$student_home/.ssh/authorized_keys"
+"""
+    return "sudo -n sh -c " + shlex.quote(script)
+
+
+def _install_pubkey(client, student_public_key: str, role: str) -> None:
+    _stdin, stdout, stderr = client.exec_command(
+        _authorized_keys_command(student_public_key),
+        timeout=20,
+    )
+    rc = stdout.channel.recv_exit_status()
+    if rc != 0:
+        err = stderr.read().decode(errors="ignore")[:300]
+        raise RuntimeError(f"{role}: {err or f'команда завершилась с кодом {rc}'}")
+
+
+def _push_pubkey_to_linux_hosts(
+    ip: str,
+    system_private_key: str,
+    student_public_key: str,
+    linux_targets: list[tuple[str, str | None]],
+    max_wait: int = 30,
+):
     user = settings.VM_ADMIN_USER
 
     print(f"[pubkey] === Подключение к {user}@{ip} ===", flush=True)
@@ -123,31 +182,59 @@ def _push_pubkey(ip: str, system_private_key: str, student_public_key: str, max_
 
      
     try:
-        client = _connect_with_key(ip, user, pkey, max_wait)
+        bastion = _connect_with_key(ip, user, pkey, max_wait)
     except Exception as net_err:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=f"Не удалось подключиться к стенду: {type(net_err).__name__}: {net_err}",
         )
 
-    script = f"""set -eu
-student_home=$(getent passwd student | cut -d: -f6)
-test -n "$student_home"
-install -d -m 0700 -o student -g student "$student_home/.ssh"
-printf '%s\\n' {shlex.quote(student_public_key)} >> "$student_home/.ssh/authorized_keys"
-sort -u "$student_home/.ssh/authorized_keys" -o "$student_home/.ssh/authorized_keys"
-chown student:student "$student_home/.ssh/authorized_keys"
-chmod 0600 "$student_home/.ssh/authorized_keys"
-"""
-    cmd = "sudo -n sh -c " + shlex.quote(script)
     try:
-         
-         
-         
-        stdin, stdout, stderr = client.exec_command(cmd, timeout=20)   
-        rc = stdout.channel.recv_exit_status()
-        if rc != 0:
-            err = stderr.read().decode(errors="ignore")[:300]
-            raise HTTPException(status_code=500, detail=f"Ошибка добавления ключа: {err}")
+        bastion_role = next(
+            (role for role, _target_ip in linux_targets if role.upper() == "L-MS"),
+            linux_targets[0][0],
+        )
+        _install_pubkey(bastion, student_public_key, bastion_role)
+
+        transport = bastion.get_transport()
+        if transport is None or not transport.is_active():
+            raise RuntimeError("SSH-транспорт L-MS недоступен")
+
+        import paramiko
+
+        for role, target_ip in linux_targets:
+            if role == bastion_role:
+                continue
+            if not target_ip:
+                raise RuntimeError(f"{role}: внутренний IP не известен")
+
+            channel = transport.open_channel(
+                "direct-tcpip",
+                (target_ip, 22),
+                ("127.0.0.1", 0),
+            )
+            target_client = paramiko.SSHClient()
+            target_client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+            try:
+                target_client.connect(
+                    hostname=target_ip,
+                    username=user,
+                    pkey=pkey,
+                    sock=channel,
+                    timeout=8,
+                    look_for_keys=False,
+                    allow_agent=False,
+                )
+                _install_pubkey(target_client, student_public_key, role)
+            finally:
+                target_client.close()
+                channel.close()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"Не удалось добавить ключ на все Linux-машины: {exc}",
+        ) from exc
     finally:
-        client.close()
+        bastion.close()

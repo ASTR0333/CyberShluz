@@ -87,6 +87,7 @@ export interface MyStandSummary {
 export interface ConsoleLinkResponse {
   launch_url: string;
   server_id: string;
+  vm_role: string;
 }
 
 export interface CheckResponse {

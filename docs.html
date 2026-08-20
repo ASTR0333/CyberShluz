@@ -147,7 +147,7 @@
     <a href="#lifecycle">8 · TTL и заморозка</a>
     <a href="#checker">9 · Движок SSH-проверок</a>
     <a href="#lti">10 · Интеграция Moodle (LTI)</a>
-    <a href="#terminal">11 · Веб-терминал</a>
+    <a href="#access">11 · Доступ к ВМ</a>
     <a href="#security">12 · ИБ и DevSecOps</a>
     <a href="#api">13 · API</a>
     <a href="#deploy">14 · Развёртывание</a>
@@ -180,15 +180,15 @@
     <div class="kicker">Архитектура</div>
     <h2>2 · Архитектура решения</h2>
     <p>Все компоненты контейнеризированы и поднимаются одной командой через <code>docker compose</code>.
-      Nginx терминирует трафик и проксирует REST/WebSocket на бэкенд; React-SPA общается с API по <code>/api/v1</code>.</p>
+      Nginx терминирует трафик и проксирует REST на бэкенд; React-SPA общается с API по <code>/api/v1</code>.</p>
 <pre><span class="c"># Топология docker-compose</span>
                          ┌─────────────────────────────┐
-   Студент / Moodle ───▶ │   nginx-proxy  (:80)        │  ◀── WebSocket (веб-терминал)
+   Студент / Moodle ───▶ │   nginx-proxy  (:80)        │
                          └──────────────┬──────────────┘
                     /api/v1, /lti       │        /  (статика SPA)
               ┌──────────────────────┐  │  ┌───────────────────────┐
               │  backend (FastAPI)   │◀─┴─▶│  frontend (React/Vite) │
-              │  REST · LTI · WS-SSH │     └───────────────────────┘
+              │  REST · LTI · SSH    │     └───────────────────────┘
               └───────┬──────────────┘
         ┌─────────────┼───────────────┬───────────────┐
    ┌────▼────┐   ┌────▼────┐    ┌─────▼─────┐    ┌─────▼──────────────┐
@@ -202,7 +202,7 @@
     <h3>Слои бэкенда</h3>
     <table>
       <tr><th>Слой</th><th>Путь</th><th>Назначение</th></tr>
-      <tr><td>API</td><td><code>app/api/v1/*</code></td><td>Роутеры: deploy, status, freeze, check, cleanup, admin, pubkey, lti, terminal, auth, moodle.</td></tr>
+      <tr><td>API</td><td><code>app/api/v1/*</code></td><td>Роутеры: deploy, status, freeze, check, cleanup, admin, pubkey, console, lti, auth, moodle.</td></tr>
       <tr><td>Core</td><td><code>app/core/*</code></td><td>Модели SQLAlchemy, <code>openstack_client</code>, <code>pool_manager</code>, security (JWT), пакет <code>lti/</code>.</td></tr>
       <tr><td>Services</td><td><code>app/services/*</code></td><td>Бизнес-логика LTI (OIDC, валидация id_token, AGS), checker_service.</td></tr>
       <tr><td>Tasks</td><td><code>app/tasks/*</code></td><td>Celery-задачи: <code>deploy</code>, <code>cleanup</code> (beat-реконсиляция), проверка.</td></tr>
@@ -213,7 +213,7 @@
     <div class="grid">
       <div class="card"><div class="t">Backend</div><div class="d">Python · FastAPI · SQLAlchemy · Pydantic · openstacksdk · paramiko · PyJWT</div></div>
       <div class="card"><div class="t">Очереди</div><div class="d">Celery + Redis (broker/result), celery-beat для периодической реконсиляции TTL.</div></div>
-      <div class="card"><div class="t">Frontend</div><div class="d">React 19 · Vite · Tailwind v4 · react-router 7 · xterm.js (веб-терминал)</div></div>
+      <div class="card"><div class="t">Frontend</div><div class="d">React 19 · Vite · Tailwind v4 · react-router 7</div></div>
       <div class="card"><div class="t">Инфраструктура</div><div class="d">OpenStack API / КИ · Ansible · Nginx · Docker Compose</div></div>
     </div>
   </section>
@@ -383,17 +383,16 @@ if utilization &gt; settings.MAX_CLUSTER_UTILIZATION:
     </ul>
   </section>
 
-  <section id="terminal">
+  <section id="access">
     <div class="kicker">UX</div>
-    <h2>11 · Веб-терминал к стенду</h2>
-    <p>Студенту не нужен локальный SSH-клиент: интерактивная сессия открывается прямо в браузере.
-      Бэкенд проксирует WebSocket в SSH-канал (paramiko) к точке входа стенда, фронтенд рендерит
-      терминал на <b>xterm.js</b>.</p>
+    <h2>11 · Доступ к виртуальным машинам</h2>
+    <p>Студент создаёт один локальный SSH-ключ и одной кнопкой устанавливает его на все Linux-ВМ
+      с ролью <code>L*</code>. L-MS служит публичной точкой входа, остальные Linux-ВМ доступны через неё.</p>
     <ul>
-      <li>Эндпоинт <code>WS /api/v1/stand/{id}/terminal</code>; авторизация по JWT в query-параметре;</li>
-      <li>Проверка владельца: студент открывает только свой стенд, преподаватель/админ — любой;</li>
-      <li>Доступ к ВМ — тем же сервисным механизмом, что и bootstrap (учётные данные студенту не раскрываются);</li>
-      <li>Поддержка изменения размера PTY (resize) и корректное закрытие сессии.</li>
+      <li>L-MS: <code>ssh student@&lt;Floating-IP&gt;</code>;</li>
+      <li>остальные L*-машины: <code>ssh -J student@&lt;Floating-IP&gt; student@&lt;Internal-IP&gt;</code>;</li>
+      <li>для каждой W*-машины кнопка в карточке топологии открывает штатную веб-консоль КИ;</li>
+      <li>backend проверяет владельца стенда и берёт UUID только из его сохранённой топологии.</li>
     </ul>
   </section>
 
@@ -430,7 +429,8 @@ if utilization &gt; settings.MAX_CLUSTER_UTILIZATION:
       <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/check/{id}</code></td><td>Запустить Ansible-проверку конфигурации стенда.</td></tr>
       <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/freeze/{id}</code></td><td>Заморозить автоудаление на 24ч (поддержка).</td></tr>
       <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/cleanup/{id}</code></td><td>Завершить стенд и вернуть слот в пул.</td></tr>
-      <tr><td><span class="badge b-blue">WS</span></td><td><code>/api/v1/stand/{id}/terminal</code></td><td>Веб-терминал (WebSocket → SSH).</td></tr>
+      <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/stand/{id}/pubkey</code></td><td>Добавить личный ключ на все Linux-ВМ стенда.</td></tr>
+      <tr><td><span class="badge b-ok">POST</span></td><td><code>/api/v1/stand/{id}/console/{role}</code></td><td>Открыть веб-консоль выбранной W*-машины.</td></tr>
       <tr><td><span class="badge b-part">*</span></td><td><code>/api/v1/lti/{login,launch,jwks}</code></td><td>LTI 1.3: OIDC-инициация, launch, JWKS Tool.</td></tr>
       <tr><td><span class="badge b-part">*</span></td><td><code>/api/v1/admin/*</code></td><td>Панель преподавателя: стенды, TTL, настройки, ёмкость, пул, аудит.</td></tr>
     </table>
